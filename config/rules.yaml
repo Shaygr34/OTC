@@ -1,0 +1,49 @@
+# ATM Probability Scorer — Rule Configuration
+# Each rule defines a scoring component and the thresholds
+# that determine whether the component contributes to the ATM score.
+#
+# Score range: 0-100. Watchlist >= 70, Trade >= 80.
+
+scoring:
+  # Weights match config/constants.py ATM_WEIGHT_* values.
+  # Changing weights here overrides the constants.
+  weights:
+    stability: 15
+    l2_imbalance: 20
+    no_bad_mm: 15
+    no_volume_anomaly: 10
+    consistent_volume: 10
+    bid_support: 10
+    ts_ratio: 10
+    dilution_clear: 10
+
+  # Thresholds for each scoring component
+  thresholds:
+    # L2 imbalance ratio thresholds
+    l2_imbalance_favorable: "3.0"
+    l2_imbalance_strong: "5.0"
+
+    # Volume anomaly — score 0 if zscore exceeds this
+    volume_anomaly_zscore_max: "2.0"
+
+    # Consistent volume — require at least this many active days
+    consistent_volume_min_days: 10
+
+    # T&S ratio — must exceed this for full score
+    ts_ratio_bullish_min: "1.0"
+
+    # Dilution — must be at or below this score for full points
+    dilution_clear_max: 2
+
+    # Bid support — imbalance must be at least FAVORABLE
+    bid_support_min_ratio: "3.0"
+
+# Action thresholds — what happens at each score level
+actions:
+  watchlist:
+    min_score: 70
+    description: "Add to watchlist for monitoring"
+
+  trade:
+    min_score: 80
+    description: "Consider for trade entry"
