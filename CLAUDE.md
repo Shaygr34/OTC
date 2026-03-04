@@ -535,10 +535,10 @@ Build in dependency order:
 4. **src/broker/** — adapter ABC, IBAdapter, MockAdapter ✅ DONE (Phase 2)
 5. **src/scanner/** — screener.py, stability.py ✅ DONE (Phase 3)
 6. **src/analysis/** — level2.py, volume.py, time_sales.py, dilution.py ✅ DONE (Phase 4)
-7. **src/rules/** — rule engine with YAML config ← **NEXT (Phase 5)**
-8. **src/risk/** — position sizing, OHI, stop conditions
-9. **src/alerts/** — Telegram dispatcher
-10. **scripts/run_system.py** — main entry, wires everything together
+7. **src/rules/** — rule engine with YAML config ✅ DONE (Phase 5)
+8. **src/risk/** — position sizing, OHI, stop conditions ✅ DONE (Phase 6)
+9. **src/alerts/** — Telegram dispatcher ✅ DONE (Phase 7)
+10. **scripts/run_system.py** — main entry, wires everything together ✅ DONE (Phase 8)
 
 Each module should be independently testable before integration.
 
@@ -546,7 +546,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**185 tests passing across 8 test files. Zero regressions at each phase.**
+**293 tests passing across 12 test files. Zero regressions at each phase. v0 pipeline complete.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -599,14 +599,55 @@ Each module should be independently testable before integration.
   - Exit trigger: score ≥ 3. Publishes DilutionAlertEvent for WARNING+
   - Tracks previous imbalance for bid erosion detection (>30% drop)
 
-### What's NOT built yet
-- `src/rules/engine.py` + `config/rules.yaml` — YAML-driven rule engine
-- `src/risk/` — position sizing, OHI market health gate, 5 layered stop conditions
-- `src/alerts/` — Telegram dispatcher
-- `scripts/run_system.py` — main entry point wiring all modules
+### Phase 5 — Rule Engine (29 tests)
+- `config/rules.yaml` — declarative scoring weights, thresholds, action config
+- `src/rules/engine.py` — RuleEngine:
+  - Subscribes to ScannerHitEvent, pulls all 5 analyzer results
+  - 8 scoring components: stability (15), L2 imbalance (20, scaled), no bad MM (15), no volume anomaly (10), consistent volume (10), bid support (10), T&S ratio (10), dilution clear (10)
+  - YAML-driven: load_rules() reads config/rules.yaml with fallback to constants.py
+  - Action: PASS (<70), WATCHLIST (≥70), TRADE (≥80)
+  - Publishes AnalysisCompleteEvent after scoring
+
+### Phase 6 — Risk Module (44 tests)
+- `src/risk/position.py` — PositionSizer:
+  - 5% max position, 2% max loss from RiskSettings
+  - compute_with_ohi() adjusts sizing by OHI factor
+  - Monthly portfolio value rebalance
+- `src/risk/market_health.py` — MarketHealthAnalyzer:
+  - OTC Health Index (OHI) composite 0-100 from 6 weighted components
+  - STRONG (≥65) full size, NEUTRAL (40-64) half size, WEAK (<40) no entries
+  - Input clamping [0, 100]
+- `src/risk/stops.py` — StopManager:
+  - 5 layered stop conditions (any triggers exit):
+    1. Hard dollar: loss > 2% of portfolio
+    2. Volatility: price < entry - 2×ATR
+    3. Time: per-tier max hold (TRIPS 4h intraday/2d overnight, DUBS 2d, PENNIES 5d)
+    4. Dilution: score ≥ 3
+    5. L2 collapse: bid shares < 30% of entry
+
+### Phase 7 — Alert System (23 tests)
+- `src/alerts/dispatcher.py` — AlertDispatcher:
+  - Subscribes to AlertEvent + DilutionAlertEvent
+  - Priority mapping: INFO→LOW, WARNING→MEDIUM, HIGH→HIGH, CRITICAL→CRITICAL
+  - Dilution alerts always HIGH+ priority
+  - min_priority filtering, dispatch history tracking
+- `src/alerts/telegram.py` — TelegramChannel:
+  - python-telegram-bot v21+ async API wrapper
+  - Graceful degradation: disabled by default, never crashes on send failure
+  - Lazy import of telegram library
+
+### Phase 8 — System Runner (12 tests)
+- `scripts/run_system.py` — SystemRunner:
+  - Composition root wiring all modules in dependency order
+  - EventBus → MockAdapter → Screener → L2/Volume/TS Analyzers → DilutionSentinel → RuleEngine → AlertDispatcher
+  - Async lifecycle: start() → run() → stop() with SIGINT/SIGTERM handlers
+  - Telegram integration optional (disabled by default)
+
+### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
 - Prop bid detection (constants exist, implementation deferred)
-- AnalysisCompleteEvent is not yet published by any module (needs rules engine to aggregate)
+- Database persistence integration (schema + repository exist, not wired into pipeline)
+- Real IBKR integration (IBAdapter exists, run_system.py uses MockAdapter)
 
 ---
 
