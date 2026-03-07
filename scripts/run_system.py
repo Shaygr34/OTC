@@ -134,9 +134,18 @@ class SystemRunner:
 
 def _setup_signal_handlers(runner: SystemRunner) -> None:
     """Register SIGINT/SIGTERM handlers for graceful shutdown."""
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, runner.request_shutdown)
+    import sys
+
+    if sys.platform != "win32":
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, runner.request_shutdown)
+    else:
+        # Windows: use signal.signal for SIGINT (Ctrl+C)
+        def _handler(signum: int, frame: object) -> None:
+            runner.request_shutdown()
+
+        signal.signal(signal.SIGINT, _handler)
 
 
 async def async_main() -> None:
