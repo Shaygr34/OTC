@@ -531,7 +531,7 @@ Build in dependency order:
 
 1. **config/** — settings, constants, price tiers, MM lists ✅ DONE (Phase 1)
 2. **src/core/** — events, event bus, shared models ✅ DONE (Phase 1)
-3. **src/database/** — schema, repository ✅ DONE (Phase 1)
+3. **src/database/** — schema, repository, persistence ✅ DONE (Phase 1 + Phase 9)
 4. **src/broker/** — adapter ABC, IBAdapter, MockAdapter ✅ DONE (Phase 2)
 5. **src/scanner/** — screener.py, stability.py ✅ DONE (Phase 3)
 6. **src/analysis/** — level2.py, volume.py, time_sales.py, dilution.py ✅ DONE (Phase 4)
@@ -546,7 +546,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**293 tests passing across 12 test files. Zero regressions at each phase. v0 pipeline complete.**
+**293 tests passing across 12 test files. Zero regressions at each phase. v0 pipeline complete. Database persistence wired into event bus.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -639,14 +639,28 @@ Each module should be independently testable before integration.
 ### Phase 8 — System Runner (12 tests)
 - `scripts/run_system.py` — SystemRunner:
   - Composition root wiring all modules in dependency order
-  - EventBus → MockAdapter → Screener → L2/Volume/TS Analyzers → DilutionSentinel → RuleEngine → AlertDispatcher
+  - EventBus → MockAdapter → Screener → L2/Volume/TS Analyzers → DilutionSentinel → RuleEngine → DatabasePersistence → AlertDispatcher
   - Async lifecycle: start() → run() → stop() with SIGINT/SIGTERM handlers
+  - Windows-compatible signal handling (signal.signal fallback for SIGINT)
   - Telegram integration optional (disabled by default)
+
+### Phase 9 — Database Persistence Wiring
+- `src/database/persistence.py` — DatabasePersistence:
+  - EventBus subscriber that persists pipeline events to SQLite
+  - L2UpdateEvent → `l2_snapshots` (bid/ask levels as JSON, imbalance ratio)
+  - TradeEvent → `trades` (price, size, side, mm_id)
+  - AlertEvent → `alerts` (type, severity, message)
+  - DilutionAlertEvent → `alerts` (as type "DILUTION", score + signals in message)
+  - AnalysisCompleteEvent → `daily_scores` (all component scores)
+  - All writes wrapped in try/except — failures log but never crash the pipeline
+- `scripts/run_system.py` updates:
+  - Creates SQLAlchemy async engine + session factory from DatabaseSettings.url
+  - Calls `create_all_tables()` on startup (idempotent)
+  - Disposes engine on shutdown
 
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
 - Prop bid detection (constants exist, implementation deferred)
-- Database persistence integration (schema + repository exist, not wired into pipeline)
 - Real IBKR integration (IBAdapter exists, run_system.py uses MockAdapter)
 
 ---
