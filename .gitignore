@@ -14,6 +14,9 @@ env/
 # Environment / secrets
 .env
 
+# User config (local overrides, not committed)
+data/user_config.json
+
 # Database
 *.db
 *.sqlite
