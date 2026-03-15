@@ -13,9 +13,6 @@ import structlog
 from config.settings import Settings, get_settings
 from src.alerts.dispatcher import AlertDispatcher
 from src.alerts.telegram import TelegramChannel
-from src.database.persistence import DatabasePersistence
-from src.database.repository import Repository, get_engine, get_session_factory
-from src.database.schema import create_all_tables
 from src.analysis.dilution import DilutionSentinel
 from src.analysis.level2 import L2Analyzer
 from src.analysis.time_sales import TSAnalyzer
@@ -49,7 +46,6 @@ class SystemRunner:
         self.event_bus = EventBus()
 
         # ── Adapter selection ──
-        # Use IBAdapter only when explicitly enabled via ATM_USE_IBKR=1
         use_ibkr = os.environ.get("ATM_USE_IBKR", "").lower() in ("1", "true", "yes")
         if use_ibkr:
             from src.broker.ibkr import IBAdapter
@@ -91,13 +87,6 @@ class SystemRunner:
             rules=load_rules(),
         )
 
-        # ── Database ──
-        db_url = self._settings.database.url
-        self._engine = get_engine(db_url)
-        self._session_factory = get_session_factory(self._engine)
-        self.repository = Repository(self._session_factory)
-        self.db_persistence = DatabasePersistence(self.event_bus, self.repository)
-
         # ── Alerts ──
         telegram_settings = self._settings.telegram
         self.telegram = TelegramChannel(
@@ -113,10 +102,7 @@ class SystemRunner:
         """Connect adapter and start all modules."""
         logger.info("system_starting", adapter=self._adapter_name)
 
-        # Initialize database
-        await create_all_tables(self._engine)
-
-        # Create database tables (idempotent)
+        # Initialize database (idempotent)
         await create_all_tables(self._engine)
 
         # Connect broker adapter
@@ -141,9 +127,8 @@ class SystemRunner:
         self.volume_analyzer.start()
         self.ts_analyzer.start()
         self.rule_engine.start()
-        self.db_persistence.start()
-        self.alert_dispatcher.start()
         self.persistence.start()
+        self.alert_dispatcher.start()
 
         # Subscribe to live market data for all watchlist symbols
         for entry in self._watchlist:
@@ -177,7 +162,6 @@ class SystemRunner:
         await self.adapter.disconnect()
         await self._engine.dispose()
         await self.telegram.shutdown()
-        await self._engine.dispose()
 
         self.event_bus.reset()
         logger.info("system_stopped")
