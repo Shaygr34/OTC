@@ -144,6 +144,37 @@ class IBAdapter(BrokerAdapter):
             self._untrack_sub(symbol, "tick_by_tick")
             logger.info("unsubscribed_tick_by_tick", symbol=symbol)
 
+    # ── Historical data ──────────────────────────────────────────
+
+    async def request_historical_bars(
+        self,
+        symbol: str,
+        exchange: str = "PINK",
+        duration: str = "30 D",
+        bar_size: str = "1 day",
+    ) -> list[dict]:
+        self._ensure_connected()
+        contract = await self.create_otc_contract(symbol, exchange)
+        bars = await self._ib.reqHistoricalDataAsync(
+            contract,
+            endDateTime="",
+            durationStr=duration,
+            barSizeSetting=bar_size,
+            whatToShow="TRADES",
+            useRTH=True,
+        )
+        result = []
+        for bar in bars or []:
+            result.append({
+                "open": Decimal(str(bar.open)),
+                "high": Decimal(str(bar.high)),
+                "low": Decimal(str(bar.low)),
+                "close": Decimal(str(bar.close)),
+                "volume": int(bar.volume),
+            })
+        logger.info("historical_bars_loaded", symbol=symbol, count=len(result))
+        return result
+
     # ── ib_async callback (sync → async bridge) ─────────────────
 
     def _on_pending_tickers(self, tickers: list) -> None:

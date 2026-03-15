@@ -34,7 +34,6 @@ v0 is a **screening, surveillance, and logging system**. It surfaces ATM candida
 
 - Order execution (manual only)
 - Backtesting engine (v1+)
-- Streamlit dashboard (alerts + logs first)
 - Polygon.io integration (IBKR data only to minimize cost)
 
 ---
@@ -546,7 +545,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**293 tests passing across 12 test files. Zero regressions at each phase. v0 pipeline complete. Database persistence wired into event bus.**
+**312 tests passing across 14 test files. Zero regressions at each phase. v0 pipeline + go-live wiring + dashboard + local deploy complete.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -644,24 +643,67 @@ Each module should be independently testable before integration.
   - Windows-compatible signal handling (signal.signal fallback for SIGINT)
   - Telegram integration optional (disabled by default)
 
-### Phase 9 — Database Persistence Wiring
-- `src/database/persistence.py` — DatabasePersistence:
-  - EventBus subscriber that persists pipeline events to SQLite
-  - L2UpdateEvent → `l2_snapshots` (bid/ask levels as JSON, imbalance ratio)
-  - TradeEvent → `trades` (price, size, side, mm_id)
-  - AlertEvent → `alerts` (type, severity, message)
-  - DilutionAlertEvent → `alerts` (as type "DILUTION", score + signals in message)
-  - AnalysisCompleteEvent → `daily_scores` (all component scores)
-  - All writes wrapped in try/except — failures log but never crash the pipeline
-- `scripts/run_system.py` updates:
-  - Creates SQLAlchemy async engine + session factory from DatabaseSettings.url
-  - Calls `create_all_tables()` on startup (idempotent)
-  - Disposes engine on shutdown
+### Phase 9 — Go-Live Wiring (19 tests)
+- `src/database/persistence.py` — PersistenceSubscriber:
+  - Subscribes to 6 event types, routes each to correct Repository method
+  - L2UpdateEvent → save_l2_snapshot (converts tuple levels to dict)
+  - TradeEvent → save_trade
+  - AlertEvent → save_alert
+  - DilutionAlertEvent → save_alert (mapped to DILUTION type)
+  - AnalysisCompleteEvent → upsert_daily_score (by ticker+date)
+  - ScannerHitEvent → upsert_candidate (first-time only via _seen_candidates set)
+- `src/database/repository.py` — added upsert_daily_score() and upsert_candidate() using SQLite INSERT ON CONFLICT DO UPDATE
+- `src/database/schema.py` — added UNIQUE constraint on candidates.ticker
+- `src/scanner/watchlist.py` — YAML watchlist loader + WatchlistEntry dataclass
+- `config/watchlist.yaml` — user-populated symbol list
+- `src/broker/history.py` — HistoryLoader.seed() one-shot seeder
+- `src/broker/adapter.py` — added abstract request_historical_bars()
+- `src/broker/ibkr.py` — implemented request_historical_bars() via reqHistoricalDataAsync
+- `src/broker/mock.py` — implemented request_historical_bars() + set_historical_data()
+- `scripts/run_system.py` — wired: DB init, persistence, watchlist, history seed, adapter selection (ATM_USE_IBKR=1), market data subscriptions per watchlist symbol
+- `src/dashboard/app.py` — redesigned: dark terminal UI, card-based metrics, L2 depth viz, component score bars
+- `.env.example` — updated with ATM_USE_IBKR, TELEGRAM_ENABLED
+
+### Phase 10 — Dashboard Polish & Local Deploy
+- `src/dashboard/app.py` — fixed: nav cutoff CSS, avg score query (JOINs daily_scores), candidate list JOINs daily_scores for real scores, Volume component max corrected to 20
+- `scripts/seed_realistic.py` — realistic mock data seeder: 20 candidates across all 5 price tiers, 7-day score history with drift, L2 snapshots with MM IDs, 300+ trades, severity-distributed alerts
+- `setup.sh` — one-command bootstrap: venv, deps, .env, dirs, demo data seed
+- `start.sh` — launches engine + dashboard together, `--live` flag for IBKR, clean Ctrl+C shutdown via trap
+- `README.md` — quick-start guide for non-developers (clone + setup + run)
 
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
 - Prop bid detection (constants exist, implementation deferred)
-- Real IBKR integration (IBAdapter exists, run_system.py uses MockAdapter)
+
+---
+
+## End-User: Eldar
+
+Eldar is the sole operator/trader. He is NOT a developer. The product must be operable by someone who:
+- Understands OTC penny stock mechanics deeply (ATM pattern, L2, MMs, dilution)
+- Manually trades via TWS — the system is his decision-support co-pilot
+- Needs clear, actionable signals — not raw data dumps
+- Wants to see: "Which stocks are ATM-ready? What changed? Should I exit?"
+
+### What Eldar's daily workflow should look like
+
+1. **Morning**: Opens dashboard → sees overnight scoring changes, new candidates, any critical alerts
+2. **During session**: Dashboard auto-updates → L2 shifts, dilution warnings, volume spikes surface in real-time
+3. **Trade decision**: Clicks into a candidate → sees ATM score, component breakdown, L2 depth, T&S flow → decides to enter/skip
+4. **Position monitoring**: Active positions show stop status, dilution score, L2 collapse risk
+5. **End of day**: Reviews what happened, logs manual trades, system learns from decisions vs outcomes
+
+### What the product needs to become (v0 → v0.5 roadmap)
+
+The engine + analysis pipeline is complete. What's missing is **the product layer** — making it actually useful as a daily tool:
+
+1. **Watchlist management via UI** — add/remove tickers from dashboard, not YAML
+2. **Position tracker** — log entries/exits, see P&L, link to ATM scores at entry
+3. **Score change notifications** — "ABCD dropped from 85 → 62" as a Telegram push
+4. **Historical score view** — trend charts per ticker over days/weeks
+5. **One-click actions** — "Add to watchlist" / "Mark as trading" / "Reject" from the dashboard
+6. **Mobile-friendly alerts** — Telegram messages with enough context to act on (not just "alert fired")
+7. **Session summary** — end-of-day report: what scored, what alerted, what the human decided
 
 ---
 
@@ -680,10 +722,56 @@ Each module should be independently testable before integration.
 
 ## What Comes After v0
 
+**v0.5**: Product polish for Eldar. Watchlist UI, position tracker, score trends, actionable Telegram alerts. Make it a daily-driver tool.
+
 **v1**: Paper execution layer. System logs human decisions vs its scoring. L2 dataset grows. After 200+ cycles, statistical validation begins.
 
 **v2**: Backtesting engine using proprietary L2 data. Custom event-driven backtester with OTC fill simulation (5% ADV cap, spread estimation via EDGE, square-root market impact). Walk-forward optimization.
 
 **v3**: Semi-automated execution. System proposes trades, human confirms. Gradual automation of high-confidence patterns.
 
-Do not build ahead. Stay in v0 until explicitly told to advance.
+Do not build ahead. Stay in current phase until explicitly told to advance.
+
+---
+
+## Running the System
+
+```bash
+# First-time setup (creates venv, installs deps, seeds demo data)
+bash setup.sh
+
+# Start engine + dashboard together (mock mode)
+bash start.sh
+
+# Start with real IBKR data (TWS must be running on port 7497)
+bash start.sh --live
+
+# Or run individually:
+.venv/bin/python scripts/run_system.py              # engine only
+.venv/bin/python scripts/run_dashboard.py --port 8501  # dashboard only
+ATM_USE_IBKR=1 .venv/bin/python scripts/run_system.py  # engine with IBKR
+
+# Re-seed demo data
+.venv/bin/python scripts/seed_realistic.py
+
+# Tests
+.venv/bin/pytest tests/ -x -q
+
+# Lint
+.venv/bin/ruff check src/ tests/ config/
+```
+
+### Config files
+- `.env` — environment variables (copy from `.env.example`)
+- `config/watchlist.yaml` — tickers to monitor
+- `config/rules.yaml` — scoring weights and thresholds
+- `config/constants.py` — all hardcoded thresholds and MM lists
+
+### Co-founder deployment
+Eldar runs TWS on his machine. To set up his environment:
+1. Install Python 3.12+ and Git
+2. `git clone <repo> && cd OTC && bash setup.sh`
+3. Edit `.env` -> `ATM_USE_IBKR=1`, edit `config/watchlist.yaml` with tickers
+4. `bash start.sh --live`
+
+A hand-off prompt for his Claude Code CLI is available to automate the full setup.

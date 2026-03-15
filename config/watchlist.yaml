@@ -1,0 +1,7 @@
+# Symbols to monitor. Populate with your target tickers.
+# Each entry needs a ticker and exchange (PINK or GREY).
+symbols:
+  # - ticker: ABCD
+  #   exchange: PINK
+  # - ticker: EFGH
+  #   exchange: GREY

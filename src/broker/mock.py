@@ -36,6 +36,7 @@ class MockAdapter(BrokerAdapter):
         self._connected = False
         self._contracts: dict[str, MockContract] = {}
         self._subscriptions: dict[str, set[str]] = {}
+        self._historical_data: dict[str, list[dict]] = {}
         self._next_con_id = 1
 
     # ── Lifecycle ────────────────────────────────────────────────
@@ -163,6 +164,23 @@ class MockAdapter(BrokerAdapter):
             mm_id=mm_id,
         )
         await self._event_bus.publish(event)
+
+    # ── Historical data ──────────────────────────────────────────
+
+    async def request_historical_bars(
+        self,
+        symbol: str,
+        exchange: str = "PINK",
+        duration: str = "30 D",
+        bar_size: str = "1 day",
+    ) -> list[dict]:
+        """Return injectable test data, or empty list by default."""
+        self._ensure_connected()
+        return list(self._historical_data.get(symbol, []))
+
+    def set_historical_data(self, symbol: str, bars: list[dict]) -> None:
+        """Inject historical bar data for testing."""
+        self._historical_data[symbol] = bars
 
     # ── Introspection (for test assertions) ──────────────────────
 

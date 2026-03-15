@@ -5,6 +5,7 @@ RuleEngine → AlertDispatcher. Async main loop.
 """
 
 import asyncio
+import os
 import signal
 
 import structlog
@@ -19,10 +20,15 @@ from src.analysis.dilution import DilutionSentinel
 from src.analysis.level2 import L2Analyzer
 from src.analysis.time_sales import TSAnalyzer
 from src.analysis.volume import VolumeAnalyzer
+from src.broker.history import HistoryLoader
 from src.broker.mock import MockAdapter
 from src.core.event_bus import EventBus
+from src.database.persistence import PersistenceSubscriber
+from src.database.repository import Repository, get_engine, get_session_factory
+from src.database.schema import create_all_tables
 from src.rules.engine import RuleEngine, load_rules
 from src.scanner.screener import Screener
+from src.scanner.watchlist import load_watchlist
 
 logger = structlog.get_logger(__name__)
 
@@ -41,7 +47,24 @@ class SystemRunner:
 
         # ── Core ──
         self.event_bus = EventBus()
-        self.adapter = MockAdapter(self.event_bus)
+
+        # ── Adapter selection ──
+        # Use IBAdapter only when explicitly enabled via ATM_USE_IBKR=1
+        use_ibkr = os.environ.get("ATM_USE_IBKR", "").lower() in ("1", "true", "yes")
+        if use_ibkr:
+            from src.broker.ibkr import IBAdapter
+
+            self.adapter = IBAdapter(self.event_bus, self._settings.ibkr)
+            self._adapter_name = "ibkr"
+        else:
+            self.adapter = MockAdapter(self.event_bus)
+            self._adapter_name = "mock"
+
+        # ── Database ──
+        self._engine = get_engine(self._settings.database.url)
+        self._session_factory = get_session_factory(self._engine)
+        self._repo = Repository(self._session_factory)
+        self.persistence = PersistenceSubscriber(self._repo, self.event_bus)
 
         # ── Scanner ──
         self.screener = Screener(self.event_bus)
@@ -88,13 +111,25 @@ class SystemRunner:
 
     async def start(self) -> None:
         """Connect adapter and start all modules."""
-        logger.info("system_starting")
+        logger.info("system_starting", adapter=self._adapter_name)
+
+        # Initialize database
+        await create_all_tables(self._engine)
 
         # Create database tables (idempotent)
         await create_all_tables(self._engine)
 
         # Connect broker adapter
         await self.adapter.connect()
+
+        # Load watchlist
+        self._watchlist = load_watchlist()
+        logger.info("watchlist_loaded", symbols=len(self._watchlist))
+
+        # Seed historical data for stability metrics
+        if self._watchlist:
+            loaded = await HistoryLoader.seed(self._watchlist, self.adapter, self.screener)
+            logger.info("history_complete", loaded=loaded)
 
         # Initialize Telegram if enabled
         if self._settings.telegram.enabled:
@@ -108,9 +143,17 @@ class SystemRunner:
         self.rule_engine.start()
         self.db_persistence.start()
         self.alert_dispatcher.start()
+        self.persistence.start()
+
+        # Subscribe to live market data for all watchlist symbols
+        for entry in self._watchlist:
+            await self.adapter.subscribe_market_data(entry.ticker, entry.exchange)
+            await self.adapter.subscribe_l2_depth(entry.ticker, entry.exchange)
+            await self.adapter.subscribe_tick_by_tick(entry.ticker, entry.exchange)
+        logger.info("subscriptions_active", symbols=len(self._watchlist))
 
         self._running = True
-        logger.info("system_started", modules=6)
+        logger.info("system_started", modules=7, adapter=self._adapter_name)
 
     async def run(self) -> None:
         """Run the main loop until shutdown is signaled."""
@@ -134,6 +177,7 @@ class SystemRunner:
         await self.adapter.disconnect()
         await self._engine.dispose()
         await self.telegram.shutdown()
+        await self._engine.dispose()
 
         self.event_bus.reset()
         logger.info("system_stopped")

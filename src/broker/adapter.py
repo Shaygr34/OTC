@@ -78,3 +78,19 @@ class BrokerAdapter(ABC):
     @abstractmethod
     async def unsubscribe_tick_by_tick(self, symbol: str) -> None:
         """Cancel tick-by-tick subscription."""
+
+    # ── Historical data ────────────────────────────────────────
+
+    @abstractmethod
+    async def request_historical_bars(
+        self,
+        symbol: str,
+        exchange: str = "PINK",
+        duration: str = "30 D",
+        bar_size: str = "1 day",
+    ) -> list[dict]:
+        """Fetch historical OHLCV bars.
+
+        Returns list of dicts with keys: open, high, low, close, volume.
+        All price values are Decimal.
+        """

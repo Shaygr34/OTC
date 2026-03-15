@@ -19,7 +19,7 @@ class Candidate(Base):
     __tablename__ = "candidates"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    ticker: Mapped[str] = mapped_column(String, nullable=False)
+    ticker: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     price_tier: Mapped[str] = mapped_column(String, nullable=False)
     first_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     last_scored: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)

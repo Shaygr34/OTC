@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -200,3 +201,71 @@ class Repository:
             await session.commit()
             await session.refresh(row)
             return row
+
+    async def upsert_daily_score(
+        self,
+        ticker: str,
+        date: str,
+        atm_score: Decimal | None = None,
+        stability_score: Decimal | None = None,
+        l2_score: Decimal | None = None,
+        volume_score: Decimal | None = None,
+        dilution_score: Decimal | None = None,
+        ts_score: Decimal | None = None,
+        ohi_score: Decimal | None = None,
+    ) -> None:
+        """Insert or update daily score by UNIQUE(ticker, date)."""
+        values = {
+            "ticker": ticker,
+            "date": date,
+            "atm_score": str(atm_score) if atm_score is not None else None,
+            "stability_score": str(stability_score) if stability_score is not None else None,
+            "l2_score": str(l2_score) if l2_score is not None else None,
+            "volume_score": str(volume_score) if volume_score is not None else None,
+            "dilution_score": str(dilution_score) if dilution_score is not None else None,
+            "ts_score": str(ts_score) if ts_score is not None else None,
+            "ohi_score": str(ohi_score) if ohi_score is not None else None,
+        }
+        update_cols = {k: v for k, v in values.items() if k not in ("ticker", "date")}
+        async with self._session_factory() as session:
+            stmt = (
+                sqlite_insert(DailyScore)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=["ticker", "date"],
+                    set_=update_cols,
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
+
+    async def upsert_candidate(
+        self,
+        ticker: str,
+        price_tier: str,
+        atm_score: Decimal | None = None,
+        status: str = "active",
+    ) -> None:
+        """Insert or update candidate by ticker. Updates score/status if exists."""
+        values = {
+            "ticker": ticker,
+            "price_tier": price_tier,
+            "first_seen": datetime.now(UTC),
+            "atm_score": str(atm_score) if atm_score is not None else None,
+            "status": status,
+        }
+        async with self._session_factory() as session:
+            stmt = (
+                sqlite_insert(Candidate)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=["ticker"],
+                    set_={
+                        "atm_score": values["atm_score"],
+                        "last_scored": datetime.now(UTC),
+                        "status": status,
+                    },
+                )
+            )
+            await session.execute(stmt)
+            await session.commit()
