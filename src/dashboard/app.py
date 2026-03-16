@@ -44,7 +44,17 @@ def _build_css() -> str:
 
     return f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+/* Font loading — non-blocking, graceful fallback to system fonts */
+@font-face {{
+    font-family: 'JetBrains Mono';
+    font-display: swap;
+    src: local('JetBrains Mono'), local('JetBrainsMono-Regular');
+}}
+@font-face {{
+    font-family: 'Inter';
+    font-display: swap;
+    src: local('Inter'), local('Inter-Regular');
+}}
 
 /* Global overrides */
 .stApp {{ background-color: #0a0e17; }}
