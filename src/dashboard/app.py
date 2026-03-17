@@ -581,9 +581,13 @@ def render_candidates():
     """, tuple(params))
 
     if df.empty:
+        # Check if DB has zero candidates at all (not just filtered out)
+        total = query_df("SELECT count(*) as c FROM candidates")
+        total_count = int(total.iloc[0]["c"]) if not total.empty else 0
+        msg = t("misc.empty_start") if total_count == 0 else t("misc.no_candidates")
         st.markdown(
             f'<div class="empty-state"><div class="empty-text">'
-            f'{t("misc.no_candidates")}</div></div>',
+            f'{msg}</div></div>',
             unsafe_allow_html=True,
         )
         return
@@ -1351,6 +1355,21 @@ def render_settings():
         }
         save_config(cfg)
         st.success(t("settings.saved"))
+
+    # ── Clear All Data ──
+    st.markdown(f'<div class="section-header">{t("settings.clear_data")}</div>', unsafe_allow_html=True)
+    st.warning(t("settings.clear_confirm"))
+    if st.button(t("settings.clear_data"), key="clear_all_data", type="primary"):
+        if db_exists():
+            db = get_db_path()
+            conn = sqlite3.connect(str(db))
+            for tbl in ("candidates", "trades", "l2_snapshots", "trade_log", "alerts", "daily_scores"):
+                conn.execute(f"DELETE FROM {tbl}")  # noqa: S608
+            conn.execute("DELETE FROM sqlite_sequence")
+            conn.commit()
+            conn.close()
+            st.success(t("settings.data_cleared"))
+            st.rerun()
 
 
 # ── First-Run Wizard ───────────────────────────────────────────
