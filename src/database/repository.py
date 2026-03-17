@@ -65,6 +65,45 @@ class Repository:
             )
             return list(result.scalars().all())
 
+    async def get_candidates_by_statuses(self, statuses: list[str]) -> list[Candidate]:
+        """Return candidates matching any of the given statuses."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Candidate).where(Candidate.status.in_(statuses))
+            )
+            return list(result.scalars().all())
+
+    async def activate_candidate(
+        self,
+        ticker: str,
+        price_tier: str,
+        exchange: str = "PINK",
+    ) -> None:
+        """Mark a manual candidate as active with resolved tier and exchange."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Candidate).where(Candidate.ticker == ticker)
+            )
+            candidate = result.scalar_one_or_none()
+            if candidate:
+                candidate.status = "active"
+                candidate.price_tier = price_tier
+                candidate.exchange = exchange
+                candidate.last_scored = datetime.now(UTC)
+                await session.commit()
+
+    async def reject_candidate(self, ticker: str, reason: str) -> None:
+        """Mark a candidate as rejected with a reason."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Candidate).where(Candidate.ticker == ticker)
+            )
+            candidate = result.scalar_one_or_none()
+            if candidate:
+                candidate.status = "rejected"
+                candidate.rejection_reason = reason
+                await session.commit()
+
     # -- L2 Snapshots --------------------------------------------------------
 
     async def save_l2_snapshot(
@@ -245,6 +284,7 @@ class Repository:
         price_tier: str,
         atm_score: Decimal | None = None,
         status: str = "active",
+        exchange: str = "PINK",
     ) -> None:
         """Insert or update candidate by ticker. Updates score/status if exists."""
         values = {
@@ -253,6 +293,7 @@ class Repository:
             "first_seen": datetime.now(UTC),
             "atm_score": str(atm_score) if atm_score is not None else None,
             "status": status,
+            "exchange": exchange,
         }
         async with self._session_factory() as session:
             stmt = (

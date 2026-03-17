@@ -147,6 +147,22 @@ _STRINGS: dict[str, dict[str, str]] = {
     "misc.filter_tier": {"en": "Filter by tier", "he": "סינון לפי שכבה"},
     "misc.filter_status": {"en": "Filter by status", "he": "סינון לפי סטטוס"},
     "misc.sort_by": {"en": "Sort by", "he": "מיין לפי"},
+    "misc.empty_start": {
+        "en": "Add a ticker to get started",
+        "he": "הוסף מניה כדי להתחיל",
+    },
+    "settings.clear_data": {
+        "en": "Clear All Data",
+        "he": "מחק את כל הנתונים",
+    },
+    "settings.clear_confirm": {
+        "en": "Are you sure? This will delete all candidates, alerts, scores, and trade data.",
+        "he": "בטוח? פעולה זו תמחק את כל המועמדים, ההתראות, הציונים ונתוני המסחר.",
+    },
+    "settings.data_cleared": {
+        "en": "All data cleared.",
+        "he": "כל הנתונים נמחקו.",
+    },
 }
 
 

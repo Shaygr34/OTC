@@ -6,7 +6,7 @@ JSON columns store L2 level arrays.
 
 from datetime import UTC, datetime
 
-from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.ext.asyncio import AsyncEngine
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
@@ -25,6 +25,7 @@ class Candidate(Base):
     last_scored: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     atm_score: Mapped[str | None] = mapped_column(String, nullable=True)  # Decimal as text
     status: Mapped[str] = mapped_column(String, default="active")
+    exchange: Mapped[str] = mapped_column(String, default="PINK")
     rejection_reason: Mapped[str | None] = mapped_column(Text, nullable=True)
 
 
@@ -109,3 +110,11 @@ async def create_all_tables(engine: AsyncEngine) -> None:
     """Create all tables. Idempotent — safe to call on startup."""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+    # Migrate: add exchange column to candidates if missing (for existing DBs)
+    async with engine.begin() as conn:
+        try:
+            await conn.execute(
+                text("ALTER TABLE candidates ADD COLUMN exchange TEXT DEFAULT 'PINK'")
+            )
+        except Exception:
+            pass  # Column already exists

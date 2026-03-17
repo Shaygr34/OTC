@@ -15,7 +15,7 @@ from src.core.events import L2UpdateEvent, MarketDataEvent, TradeEvent
 
 logger = structlog.get_logger(__name__)
 
-_VALID_EXCHANGES = {"PINK", "GREY"}
+_VALID_EXCHANGES = {"PINK", "GREY", "OTC"}
 
 
 @dataclass(frozen=True)

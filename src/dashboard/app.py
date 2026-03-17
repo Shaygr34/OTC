@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from config.i18n import get_lang, set_lang, t
 from config.user_config import (
@@ -44,7 +45,17 @@ def _build_css() -> str:
 
     return f"""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
+/* Font loading — non-blocking, graceful fallback to system fonts */
+@font-face {{
+    font-family: 'JetBrains Mono';
+    font-display: swap;
+    src: local('JetBrains Mono'), local('JetBrainsMono-Regular');
+}}
+@font-face {{
+    font-family: 'Inter';
+    font-display: swap;
+    src: local('Inter'), local('Inter-Regular');
+}}
 
 /* Global overrides */
 .stApp {{ background-color: #0a0e17; }}
@@ -416,6 +427,7 @@ def render_nav():
             counts[table] = int(r.iloc[0]["c"]) if not r.empty else 0
 
     dot_class, status_label = _get_connection_status()
+    now_str = datetime.now(UTC).strftime("%H:%M:%S")
 
     st.markdown(
         f'<div class="nav-bar">'
@@ -428,6 +440,7 @@ def render_nav():
             f'<span>{counts.get("alerts", 0)} {t("section.alerts").split()[-1].lower()}</span>'
             if db_ok else ""
         )
+        + f'<span style="opacity:0.5">Updated {now_str} UTC</span>'
         + '</div></div>',
         unsafe_allow_html=True,
     )
@@ -462,8 +475,8 @@ def render_overview():
         "SELECT count(*) as c FROM alerts WHERE severity IN ('CRITICAL','HIGH')"
     )
 
-    total = int(candidates_df.iloc[0]["total"]) if not candidates_df.empty else 0
-    active = int(candidates_df.iloc[0]["active"]) if not candidates_df.empty else 0
+    total = int(candidates_df.iloc[0]["total"] or 0) if not candidates_df.empty else 0
+    active = int(candidates_df.iloc[0]["active"] or 0) if not candidates_df.empty else 0
     avg = avg_score_df.iloc[0]["avg_score"] if not avg_score_df.empty else None
     tc = int(trades_count.iloc[0]["c"]) if not trades_count.empty else 0
     lc = int(l2_count.iloc[0]["c"]) if not l2_count.empty else 0
@@ -488,21 +501,27 @@ def render_watchlist_controls():
     col_add, col_filter_tier, col_filter_status, col_sort = st.columns([2, 1.5, 1.5, 1.5])
 
     with col_add:
-        add_cols = st.columns([3, 1])
+        add_cols = st.columns([3, 1, 1])
         with add_cols[0]:
             new_ticker = st.text_input(
                 t("action.add_ticker"), placeholder="e.g. ABCD",
                 label_visibility="collapsed", key="new_ticker_input",
             )
         with add_cols[1]:
+            exchange = st.selectbox(
+                "Exchange", ["PINK", "GREY"],
+                label_visibility="collapsed", key="exchange_select",
+            )
+        with add_cols[2]:
             add_clicked = st.button(t("action.add_ticker"), key="add_ticker_btn")
 
         if add_clicked and new_ticker and new_ticker.strip():
             ticker_clean = new_ticker.strip().upper()
             execute_sql(
-                "INSERT OR IGNORE INTO candidates (ticker, price_tier, status, first_seen) "
-                "VALUES (?, 'UNKNOWN', 'manual', ?)",
-                (ticker_clean, datetime.now(UTC).isoformat()),
+                "INSERT OR IGNORE INTO candidates "
+                "(ticker, price_tier, status, exchange, first_seen) "
+                "VALUES (?, 'UNKNOWN', 'manual', ?, ?)",
+                (ticker_clean, exchange, datetime.now(UTC).isoformat()),
             )
             st.rerun()
 
@@ -568,9 +587,13 @@ def render_candidates():
     """, tuple(params))
 
     if df.empty:
+        # Check if DB has zero candidates at all (not just filtered out)
+        total = query_df("SELECT count(*) as c FROM candidates")
+        total_count = int(total.iloc[0]["c"]) if not total.empty else 0
+        msg = t("misc.empty_start") if total_count == 0 else t("misc.no_candidates")
         st.markdown(
             f'<div class="empty-state"><div class="empty-text">'
-            f'{t("misc.no_candidates")}</div></div>',
+            f'{msg}</div></div>',
             unsafe_allow_html=True,
         )
         return
@@ -1339,6 +1362,21 @@ def render_settings():
         save_config(cfg)
         st.success(t("settings.saved"))
 
+    # ── Clear All Data ──
+    st.markdown(f'<div class="section-header">{t("settings.clear_data")}</div>', unsafe_allow_html=True)
+    st.warning(t("settings.clear_confirm"))
+    if st.button(t("settings.clear_data"), key="clear_all_data", type="primary"):
+        if db_exists():
+            db = get_db_path()
+            conn = sqlite3.connect(str(db))
+            for tbl in ("candidates", "trades", "l2_snapshots", "trade_log", "alerts", "daily_scores"):
+                conn.execute(f"DELETE FROM {tbl}")  # noqa: S608
+            conn.execute("DELETE FROM sqlite_sequence")
+            conn.commit()
+            conn.close()
+            st.success(t("settings.data_cleared"))
+            st.rerun()
+
 
 # ── First-Run Wizard ───────────────────────────────────────────
 
@@ -1512,6 +1550,9 @@ def main():
 
     st.markdown(_build_css(), unsafe_allow_html=True)
 
+    # Auto-refresh every 10 seconds (only when browser tab is visible)
+    st_autorefresh(interval=10_000, limit=None, key="auto_refresh")
+
     # First-run wizard check
     if not wizard_completed():
         render_wizard()
@@ -1553,5 +1594,4 @@ def main():
         render_settings()
 
 
-if __name__ == "__main__":
-    main()
+main()
