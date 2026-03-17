@@ -26,7 +26,7 @@ from src.database.repository import Repository, get_engine, get_session_factory
 from src.database.schema import create_all_tables
 from src.rules.engine import RuleEngine, load_rules
 from src.scanner.screener import Screener
-from src.scanner.watchlist import load_watchlist
+from src.scanner.watchlist import WatchlistEntry, load_watchlist
 
 logger = structlog.get_logger(__name__)
 
@@ -116,14 +116,8 @@ class SystemRunner:
         # Connect broker adapter
         await self.adapter.connect()
 
-        # Load watchlist
-        self._watchlist = load_watchlist()
-        logger.info("watchlist_loaded", symbols=len(self._watchlist))
-
-        # Seed historical data for stability metrics
-        if self._watchlist:
-            loaded = await HistoryLoader.seed(self._watchlist, self.adapter, self.screener)
-            logger.info("history_complete", loaded=loaded)
+        # One-time import: migrate watchlist.yaml entries into candidates DB
+        await self._import_watchlist_yaml()
 
         # Initialize Telegram if enabled
         if self._settings.telegram.enabled:
@@ -138,14 +132,37 @@ class SystemRunner:
         self.persistence.start()
         self.alert_dispatcher.start()
 
-        # Subscribe to live market data for all watchlist symbols
-        for entry in self._watchlist:
-            await self.adapter.subscribe_market_data(entry.ticker, entry.exchange)
-            await self.adapter.subscribe_l2_depth(entry.ticker, entry.exchange)
-            await self.adapter.subscribe_tick_by_tick(entry.ticker, entry.exchange)
-        logger.info("subscriptions_active", symbols=len(self._watchlist))
+        # Load active + manual candidates from DB and subscribe
+        active_candidates = await self._repo.get_candidates_by_statuses(
+            ["active", "manual"]
+        )
+        for c in active_candidates:
+            ex = getattr(c, "exchange", "PINK") or "PINK"
+            if c.status == "active":
+                try:
+                    await self.adapter.subscribe_market_data(c.ticker, ex)
+                    await self.adapter.subscribe_l2_depth(c.ticker, ex)
+                    await self.adapter.subscribe_tick_by_tick(c.ticker, ex)
+                except Exception:
+                    logger.warning("subscribe_failed", ticker=c.ticker)
+        active_count = sum(1 for c in active_candidates if c.status == "active")
+        logger.info("db_candidates_loaded", active=active_count)
 
-        # Process any manual candidates from previous sessions, then poll
+        # Seed historical bars for active candidates
+        if active_candidates:
+            entries = [
+                WatchlistEntry(
+                    ticker=c.ticker,
+                    exchange=getattr(c, "exchange", "PINK") or "PINK",
+                )
+                for c in active_candidates
+                if c.status == "active"
+            ]
+            if entries:
+                loaded = await HistoryLoader.seed(entries, self.adapter, self.screener)
+                logger.info("history_complete", loaded=loaded)
+
+        # Process any manual candidates, then start polling for new ones
         await self.ticker_watcher.activate_existing()
         self.ticker_watcher.start()
         logger.info("ticker_watcher_started")
@@ -179,6 +196,32 @@ class SystemRunner:
 
         self.event_bus.reset()
         logger.info("system_stopped")
+
+    async def _import_watchlist_yaml(self) -> None:
+        """One-time import: migrate watchlist.yaml entries into candidates DB.
+
+        If watchlist.yaml has entries, insert them as active candidates
+        (skipping duplicates). This lets existing users transition from
+        YAML-based config to DB-based management without losing their list.
+        """
+        watchlist = load_watchlist()
+        if not watchlist:
+            return
+
+        imported = 0
+        for entry in watchlist:
+            try:
+                await self._repo.upsert_candidate(
+                    ticker=entry.ticker,
+                    price_tier="UNKNOWN",
+                    status="active",
+                    exchange=entry.exchange,
+                )
+                imported += 1
+            except Exception:
+                logger.warning("watchlist_import_failed", ticker=entry.ticker)
+        if imported:
+            logger.info("watchlist_yaml_imported", count=imported)
 
     def request_shutdown(self) -> None:
         """Signal the main loop to exit."""
