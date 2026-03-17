@@ -20,6 +20,7 @@ from src.analysis.volume import VolumeAnalyzer
 from src.broker.history import HistoryLoader
 from src.broker.mock import MockAdapter
 from src.core.event_bus import EventBus
+from src.core.ticker_watcher import TickerWatcher
 from src.database.persistence import PersistenceSubscriber
 from src.database.repository import Repository, get_engine, get_session_factory
 from src.database.schema import create_all_tables
@@ -87,6 +88,13 @@ class SystemRunner:
             rules=load_rules(),
         )
 
+        # ── Ticker Watcher (DB → subscription bridge) ──
+        self.ticker_watcher = TickerWatcher(
+            repo=self._repo,
+            adapter=self.adapter,
+            screener=self.screener,
+        )
+
         # ── Alerts ──
         telegram_settings = self._settings.telegram
         self.telegram = TelegramChannel(
@@ -137,6 +145,11 @@ class SystemRunner:
             await self.adapter.subscribe_tick_by_tick(entry.ticker, entry.exchange)
         logger.info("subscriptions_active", symbols=len(self._watchlist))
 
+        # Process any manual candidates from previous sessions, then poll
+        await self.ticker_watcher.activate_existing()
+        self.ticker_watcher.start()
+        logger.info("ticker_watcher_started")
+
         self._running = True
         logger.info("system_started", modules=7, adapter=self._adapter_name)
 
@@ -159,6 +172,7 @@ class SystemRunner:
         logger.info("system_stopping")
         self._running = False
 
+        await self.ticker_watcher.stop()
         await self.adapter.disconnect()
         await self._engine.dispose()
         await self.telegram.shutdown()
