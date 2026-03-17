@@ -14,9 +14,12 @@ The owner is a systems-level thinker and project architect, not a beginner. They
 
 ---
 
-## Current Phase: v0 — Decision Support Pipeline
+## Current Phase: v0.5 — Product Polish (v0 engine complete)
 
-v0 is a **screening, surveillance, and logging system**. It surfaces ATM candidates, scores them, monitors positions, and logs everything. It does NOT make entry decisions or execute trades. The human trades manually based on v0's output.
+v0 engine is **complete** — all 9 analysis/infrastructure modules built and tested (312 engine tests).
+v0.5 focuses on the **product layer** — making it a daily-driver tool for Eldar. V1 dashboard deployed (Phase 11): Settings, Wizard, Watchlist management, Trade Logger, Hebrew/RTL. Eldar running locally as of 2026-03-17.
+
+The system does NOT make entry decisions or execute trades. The human trades manually based on the system's output.
 
 ### v0 Modules to Build
 
@@ -113,7 +116,10 @@ atm-trading-engine/
 ├── config/
 │   ├── settings.py          # Pydantic settings (reads .env)
 │   ├── constants.py         # Price tiers, thresholds, MM lists
-│   └── rules.yaml           # Rule engine configuration
+│   ├── rules.yaml           # Rule engine configuration
+│   ├── i18n.py              # Hebrew/English string mappings + t() helper
+│   ├── user_config.py       # JSON config persistence (data/user_config.json)
+│   └── watchlist.yaml       # User-populated symbol list (unused when managing via UI)
 ├── src/
 │   ├── core/
 │   │   ├── events.py        # Event dataclasses
@@ -121,7 +127,8 @@ atm-trading-engine/
 │   │   └── models.py        # Shared domain models
 │   ├── scanner/
 │   │   ├── screener.py      # Price/volume/stability filters
-│   │   └── stability.py     # CV, NATR, TRR, Bollinger calculations
+│   │   ├── stability.py     # CV, NATR, TRR, Bollinger calculations
+│   │   └── watchlist.py     # YAML watchlist loader
 │   ├── analysis/
 │   │   ├── level2.py        # L2 imbalance, wall detection, refresh FSM
 │   │   ├── volume.py        # Z-score, RVOL, anomaly detection
@@ -138,17 +145,30 @@ atm-trading-engine/
 │   │   └── stops.py         # Time-based, L2-collapse, dilution stops
 │   ├── broker/
 │   │   ├── adapter.py       # Abstract BrokerAdapter interface
-│   │   └── ibkr.py          # IBAdapter using ib_async
-│   └── database/
-│       ├── schema.py        # SQLAlchemy models
-│       └── repository.py    # CRUD operations
-├── tests/
+│   │   ├── ibkr.py          # IBAdapter using ib_async
+│   │   ├── mock.py          # MockAdapter for testing
+│   │   └── history.py       # HistoryLoader for seeding bar data
+│   ├── database/
+│   │   ├── schema.py        # SQLAlchemy models (6 tables)
+│   │   ├── repository.py    # Async CRUD operations
+│   │   └── persistence.py   # PersistenceSubscriber (event→DB routing)
+│   └── dashboard/
+│       └── app.py           # Streamlit dashboard (V1 — 4 tabs, wizard, Hebrew/RTL)
+├── tests/                   # 16 test files, 327 tests
 ├── scripts/
-│   └── run_system.py        # Main entry point
+│   ├── run_system.py        # Main engine entry point
+│   ├── run_dashboard.py     # Dashboard launcher
+│   ├── seed_realistic.py    # Demo data seeder (20 candidates, 7-day history)
+│   └── seed_demo_data.py    # Simple demo data seeder
 ├── data/
+│   ├── atm.db               # SQLite database (gitignored)
+│   └── user_config.json     # User overrides (gitignored)
 ├── logs/
-├── .env
+├── .env                     # Environment variables (gitignored)
+├── .env.example             # Template for .env
 ├── .gitignore
+├── setup.sh                 # One-command bootstrap
+├── start.sh                 # Launch engine + dashboard
 ├── requirements.txt
 ├── pyproject.toml
 └── ruff.toml
@@ -545,7 +565,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**312 tests passing across 14 test files. Zero regressions at each phase. v0 pipeline + go-live wiring + dashboard + local deploy complete.**
+**327 tests passing across 16 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard (Settings, Wizard, Watchlist, Trade Log, Hebrew/RTL) deployed. Eldar running locally.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -671,6 +691,22 @@ Each module should be independently testable before integration.
 - `start.sh` — launches engine + dashboard together, `--live` flag for IBKR, clean Ctrl+C shutdown via trap
 - `README.md` — quick-start guide for non-developers (clone + setup + run)
 
+### Phase 11 — V1 Dashboard Enhancement (15 new tests, 327 total)
+- `config/i18n.py` — 120+ Hebrew/English string mappings, `t()` helper, `set_lang()`/`get_lang()`
+- `config/user_config.py` — JSON config persistence at `data/user_config.json`, deep merge on defaults, `wizard_completed()` check
+- `src/dashboard/app.py` — complete rewrite (1000+ lines added):
+  - **4-tab layout**: Overview, Stock Detail, Trade Log, Settings
+  - **First-run wizard**: 6-step (Welcome → Language → IBKR → Telegram → Risk → Done), shows once
+  - **Settings page**: IBKR connection config, Telegram alerts with live test ping, risk parameters (12 fields), language toggle, system status summary
+  - **Watchlist management**: manual ticker add (📌 MANUAL tag), per-candidate Remove/Pause/Prioritize actions, filter by tier+status, sort by score/ticker/date, prioritized pinned to top (⭐)
+  - **Trade Logger**: entry form with auto-capture of ATM/L2 scores, active positions with Close Position (P&L calc), trade history with summary stats (win rate, avg/total P&L), score-vs-outcome correlation (bucket analysis + scatter)
+  - **Hebrew/RTL**: full bidirectional support, RTL CSS on text containers, technical values stay LTR
+  - **Nav bar**: real connection status (checks data activity, not hardcoded)
+- `.gitignore` — added `data/user_config.json`
+- `data/user_config.json` — local user overrides (gitignored), takes priority over `.env`
+- **Dashboard uses sync sqlite3** (not async SQLAlchemy) — appropriate for read-heavy Streamlit UI
+- **User config merges over defaults** — `config/user_config.py` deep-merges JSON overrides on top of `constants.py` defaults. Changes take effect immediately on Streamlit rerun.
+
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
 - Prop bid detection (constants exist, implementation deferred)
@@ -693,17 +729,19 @@ Eldar is the sole operator/trader. He is NOT a developer. The product must be op
 4. **Position monitoring**: Active positions show stop status, dilution score, L2 collapse risk
 5. **End of day**: Reviews what happened, logs manual trades, system learns from decisions vs outcomes
 
-### What the product needs to become (v0 → v0.5 roadmap)
+### Product layer progress (v0 → v0.5 roadmap)
 
-The engine + analysis pipeline is complete. What's missing is **the product layer** — making it actually useful as a daily tool:
-
-1. **Watchlist management via UI** — add/remove tickers from dashboard, not YAML
-2. **Position tracker** — log entries/exits, see P&L, link to ATM scores at entry
-3. **Score change notifications** — "ABCD dropped from 85 → 62" as a Telegram push
-4. **Historical score view** — trend charts per ticker over days/weeks
-5. **One-click actions** — "Add to watchlist" / "Mark as trading" / "Reject" from the dashboard
-6. **Mobile-friendly alerts** — Telegram messages with enough context to act on (not just "alert fired")
-7. **Session summary** — end-of-day report: what scored, what alerted, what the human decided
+1. ✅ **Watchlist management via UI** — add/remove/pause/prioritize tickers from dashboard (Phase 11)
+2. ✅ **Position tracker** — Trade Log page: entry form, active positions, close with P&L, history (Phase 11)
+3. ⬜ **Score change notifications** — "ABCD dropped from 85 → 62" as a Telegram push
+4. ⬜ **Historical score view** — trend charts per ticker over days/weeks
+5. ✅ **One-click actions** — Remove / Pause / Prioritize from candidate rows (Phase 11)
+6. ⬜ **Mobile-friendly alerts** — Telegram messages with enough context to act on
+7. ⬜ **Session summary** — end-of-day report: what scored, what alerted, what the human decided
+8. ✅ **Settings page** — IBKR, Telegram, risk params, language toggle (Phase 11)
+9. ✅ **First-run wizard** — 6-step setup, never shows again (Phase 11)
+10. ✅ **Hebrew mode** — full bilingual UI with RTL support (Phase 11)
+11. ✅ **Score vs outcome correlation** — bucket analysis + scatter chart in Trade Log (Phase 11)
 
 ---
 
@@ -722,7 +760,7 @@ The engine + analysis pipeline is complete. What's missing is **the product laye
 
 ## What Comes After v0
 
-**v0.5**: Product polish for Eldar. Watchlist UI, position tracker, score trends, actionable Telegram alerts. Make it a daily-driver tool.
+**v0.5** (PARTIALLY COMPLETE): Product polish for Eldar. Watchlist UI ✅, position tracker ✅, settings/wizard ✅, Hebrew ✅. Still needed: score trends, actionable Telegram alerts, session summaries.
 
 **v1**: Paper execution layer. System logs human decisions vs its scoring. L2 dataset grows. After 200+ cycles, statistical validation begins.
 
@@ -763,9 +801,12 @@ ATM_USE_IBKR=1 .venv/bin/python scripts/run_system.py  # engine with IBKR
 
 ### Config files
 - `.env` — environment variables (copy from `.env.example`)
-- `config/watchlist.yaml` — tickers to monitor
+- `data/user_config.json` — user overrides (created by wizard/settings, gitignored, takes priority over .env)
+- `config/watchlist.yaml` — tickers to monitor (engine-side; dashboard manages watchlist via DB)
 - `config/rules.yaml` — scoring weights and thresholds
 - `config/constants.py` — all hardcoded thresholds and MM lists
+- `config/i18n.py` — Hebrew/English UI strings
+- `config/user_config.py` — JSON config loader/saver with deep merge
 
 ### Co-founder deployment
 Eldar runs TWS on his machine. To set up his environment:
