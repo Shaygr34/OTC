@@ -15,6 +15,7 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from streamlit_autorefresh import st_autorefresh
 
 from config.i18n import get_lang, set_lang, t
 from config.user_config import (
@@ -426,6 +427,7 @@ def render_nav():
             counts[table] = int(r.iloc[0]["c"]) if not r.empty else 0
 
     dot_class, status_label = _get_connection_status()
+    now_str = datetime.now(UTC).strftime("%H:%M:%S")
 
     st.markdown(
         f'<div class="nav-bar">'
@@ -438,6 +440,7 @@ def render_nav():
             f'<span>{counts.get("alerts", 0)} {t("section.alerts").split()[-1].lower()}</span>'
             if db_ok else ""
         )
+        + f'<span style="opacity:0.5">Updated {now_str} UTC</span>'
         + '</div></div>',
         unsafe_allow_html=True,
     )
@@ -1521,6 +1524,9 @@ def main():
     _load_lang_from_config()
 
     st.markdown(_build_css(), unsafe_allow_html=True)
+
+    # Auto-refresh every 10 seconds (only when browser tab is visible)
+    st_autorefresh(interval=10_000, limit=None, key="auto_refresh")
 
     # First-run wizard check
     if not wizard_completed():
