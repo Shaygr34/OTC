@@ -18,16 +18,23 @@ def setup_logging(level: str = "INFO") -> None:
     """
     _LOG_DIR.mkdir(parents=True, exist_ok=True)
 
+    log_level = getattr(logging, level.upper(), logging.INFO)
+
     # Standard library logging setup (structlog renders, stdlib routes)
     root_logger = logging.getLogger()
-    root_logger.setLevel(getattr(logging, level.upper(), logging.INFO))
+    root_logger.setLevel(log_level)
 
     # Clear existing handlers to avoid duplicates on re-init
     root_logger.handlers.clear()
 
+    # Shared formatter — structlog already renders JSON, so stdlib
+    # handlers just pass through the pre-formatted string.
+    formatter = logging.Formatter("%(message)s")
+
     # Console handler (stdout)
     console = logging.StreamHandler(sys.stdout)
     console.setLevel(logging.DEBUG)
+    console.setFormatter(formatter)
     root_logger.addHandler(console)
 
     # File handler (daily rotation, keep 7 days)
@@ -39,9 +46,10 @@ def setup_logging(level: str = "INFO") -> None:
         encoding="utf-8",
     )
     file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(formatter)
     root_logger.addHandler(file_handler)
 
-    # Structlog pipeline
+    # Structlog pipeline — renders JSON, then hands to stdlib for routing
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
@@ -49,12 +57,19 @@ def setup_logging(level: str = "INFO") -> None:
             structlog.processors.TimeStamper(fmt="iso"),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
-            structlog.processors.JSONRenderer(),
+            # Bridge to stdlib logging
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
-        wrapper_class=structlog.make_filtering_bound_logger(
-            getattr(logging, level.upper(), logging.INFO)
-        ),
+        wrapper_class=structlog.make_filtering_bound_logger(log_level),
         context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=False,
     )
+
+    # Configure ProcessorFormatter for all handlers so stdlib
+    # logging also gets the JSON rendering
+    json_formatter = structlog.stdlib.ProcessorFormatter(
+        processor=structlog.processors.JSONRenderer(),
+    )
+    for handler in root_logger.handlers:
+        handler.setFormatter(json_formatter)

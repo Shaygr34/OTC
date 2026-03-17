@@ -475,8 +475,8 @@ def render_overview():
         "SELECT count(*) as c FROM alerts WHERE severity IN ('CRITICAL','HIGH')"
     )
 
-    total = int(candidates_df.iloc[0]["total"]) if not candidates_df.empty else 0
-    active = int(candidates_df.iloc[0]["active"]) if not candidates_df.empty else 0
+    total = int(candidates_df.iloc[0]["total"] or 0) if not candidates_df.empty else 0
+    active = int(candidates_df.iloc[0]["active"] or 0) if not candidates_df.empty else 0
     avg = avg_score_df.iloc[0]["avg_score"] if not avg_score_df.empty else None
     tc = int(trades_count.iloc[0]["c"]) if not trades_count.empty else 0
     lc = int(l2_count.iloc[0]["c"]) if not l2_count.empty else 0
