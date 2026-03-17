@@ -10,6 +10,7 @@ import signal
 
 import structlog
 
+from config.logging import setup_logging
 from config.settings import Settings, get_settings
 from src.alerts.dispatcher import AlertDispatcher
 from src.alerts.telegram import TelegramChannel
@@ -250,7 +251,9 @@ def _setup_signal_handlers(runner: SystemRunner) -> None:
 
 async def async_main() -> None:
     """Async entry point."""
-    runner = SystemRunner()
+    settings = get_settings()
+    setup_logging(level=settings.log.level)
+    runner = SystemRunner(settings)
     _setup_signal_handlers(runner)
     await runner.run()
 
