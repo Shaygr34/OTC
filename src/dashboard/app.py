@@ -501,21 +501,27 @@ def render_watchlist_controls():
     col_add, col_filter_tier, col_filter_status, col_sort = st.columns([2, 1.5, 1.5, 1.5])
 
     with col_add:
-        add_cols = st.columns([3, 1])
+        add_cols = st.columns([3, 1, 1])
         with add_cols[0]:
             new_ticker = st.text_input(
                 t("action.add_ticker"), placeholder="e.g. ABCD",
                 label_visibility="collapsed", key="new_ticker_input",
             )
         with add_cols[1]:
+            exchange = st.selectbox(
+                "Exchange", ["PINK", "GREY"],
+                label_visibility="collapsed", key="exchange_select",
+            )
+        with add_cols[2]:
             add_clicked = st.button(t("action.add_ticker"), key="add_ticker_btn")
 
         if add_clicked and new_ticker and new_ticker.strip():
             ticker_clean = new_ticker.strip().upper()
             execute_sql(
-                "INSERT OR IGNORE INTO candidates (ticker, price_tier, status, first_seen) "
-                "VALUES (?, 'UNKNOWN', 'manual', ?)",
-                (ticker_clean, datetime.now(UTC).isoformat()),
+                "INSERT OR IGNORE INTO candidates "
+                "(ticker, price_tier, status, exchange, first_seen) "
+                "VALUES (?, 'UNKNOWN', 'manual', ?, ?)",
+                (ticker_clean, exchange, datetime.now(UTC).isoformat()),
             )
             st.rerun()
 
