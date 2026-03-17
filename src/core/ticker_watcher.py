@@ -5,6 +5,7 @@ Bridges the gap between the dashboard (writes to DB) and the engine
 """
 
 import asyncio
+import contextlib
 from decimal import Decimal
 
 import structlog
@@ -49,10 +50,8 @@ class TickerWatcher:
         """Cancel the polling task and wait for it to finish."""
         if self._task and not self._task.done():
             self._task.cancel()
-            try:
+            with contextlib.suppress(asyncio.CancelledError):
                 await self._task
-            except asyncio.CancelledError:
-                pass
 
     async def _poll_loop(self) -> None:
         """Check for manual candidates every POLL_INTERVAL_SECONDS."""

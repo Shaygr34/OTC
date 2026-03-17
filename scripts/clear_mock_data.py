@@ -24,13 +24,15 @@ def clear(db_path: Path = DB_PATH) -> None:
 
     conn = sqlite3.connect(str(db_path))
     for table in TABLES:
-        conn.execute(f"DELETE FROM {table}")  # noqa: S608
+        conn.execute(f"DELETE FROM {table}")
     conn.execute("DELETE FROM sqlite_sequence")
     conn.commit()
 
     # Verify
     for table in TABLES:
-        count = conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]  # noqa: S608
+        count = conn.execute(
+            f"SELECT count(*) FROM {table}"
+        ).fetchone()[0]
         print(f"  {table}: {count} rows")
 
     conn.close()
