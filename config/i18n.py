@@ -38,6 +38,7 @@ _STRINGS: dict[str, dict[str, str]] = {
     "action.test_connection": {"en": "Test Connection", "he": "בדוק חיבור"},
     "action.send_test_ping": {"en": "Send Test Ping", "he": "שלח הודעת בדיקה"},
     "action.add_ticker": {"en": "Add Ticker", "he": "הוסף מניה"},
+    "action.manage_candidates": {"en": "Manage Candidates", "he": "נהל מניות"},
     "action.close_position": {"en": "Close Position", "he": "סגור פוזיציה"},
 
     # ── Alerts ──

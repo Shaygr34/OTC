@@ -396,6 +396,13 @@ def _load_lang_from_config():
 
 def _get_connection_status() -> tuple[str, str]:
     """Return (dot_class, status_label) based on real system state."""
+    # Check engine status file first (most reliable)
+    engine_status = _get_engine_status()
+    if engine_status:
+        if engine_status.get("ibkr_connected"):
+            return "live", t("status.live")
+        return "live", "Engine running (mock)"
+
     cfg = load_config()
     use_ibkr = os.environ.get("ATM_USE_IBKR", "").lower() in ("1", "true", "yes")
 
@@ -414,6 +421,50 @@ def _get_connection_status() -> tuple[str, str]:
         if not counts.empty and int(counts.iloc[0]["c"]) > 0:
             return "live", t("status.live")
     return "off", t("status.no_data")
+
+
+def _get_engine_status() -> dict | None:
+    """Read the engine status file written by SystemRunner."""
+    status_path = Path(__file__).resolve().parent.parent.parent / "data" / "engine_status.json"
+    if not status_path.exists():
+        return None
+    try:
+        import time
+        # Stale if older than 30 seconds
+        if time.time() - status_path.stat().st_mtime > 30:
+            return None
+        return json.loads(status_path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return None
+
+
+def _run_connection_test(host: str, port: int) -> None:
+    """Test IBKR connection: check engine status file, then try socket."""
+    engine_status = _get_engine_status()
+    if engine_status and engine_status.get("ibkr_connected"):
+        st.success(
+            f"Engine connected to IBKR at {engine_status.get('ibkr_host', host)}:"
+            f"{engine_status.get('ibkr_port', port)} "
+            f"(adapter: {engine_status.get('adapter', 'unknown')})"
+        )
+        return
+
+    # Fallback: try a raw TCP socket to the TWS port
+    import socket
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(3)
+    try:
+        sock.connect((host, port))
+        sock.close()
+        st.warning(
+            f"TWS is listening on {host}:{port}, but the engine is not running "
+            f"or not connected. Start the engine with: bash start.sh --live"
+        )
+    except (OSError, ConnectionRefusedError):
+        st.error(
+            f"Cannot reach TWS at {host}:{port}. "
+            f"Make sure TWS/IB Gateway is running and API connections are enabled."
+        )
 
 
 # ── Nav bar ────────────────────────────────────────────────────
@@ -598,6 +649,10 @@ def render_candidates():
         )
         return
 
+    # Build all candidate rows as a single HTML block to avoid removeChild errors
+    # caused by Streamlit DOM diffing on individual st.markdown calls
+    candidates_html = ""
+    candidate_tickers = []
     for idx, row in df.iterrows():
         score = row["atm_score"]
         score_val = score if pd.notna(score) else 0
@@ -611,41 +666,60 @@ def render_candidates():
         # Tags
         tags_html = ""
         if status == "manual":
-            tags_html = f' <span class="candidate-tag tag-manual">📌 {t("status.manual")}</span>'
+            tags_html = f' <span class="candidate-tag tag-manual">MANUAL</span>'
         elif status == "prioritized":
-            tags_html = f' <span class="candidate-tag tag-pinned">⭐</span>'
+            tags_html = f' <span class="candidate-tag tag-pinned">PRIORITY</span>'
 
-        col_row, col_actions = st.columns([6, 1])
-        with col_row:
-            st.markdown(
-                f'<div class="candidate-row">'
-                f'<span class="candidate-ticker">{row["ticker"]}{tags_html}</span>'
-                f'<span class="candidate-tier">{tier}</span>'
-                f'<div class="candidate-bar-wrap">'
-                f'<div class="candidate-bar-bg">'
-                f'<div class="candidate-bar-fill" style="width:{pct}%;background:{fill_color}"></div>'
-                f'</div>'
-                f'{badge}'
-                f'</div>'
-                f'<span style="font-size:11px;color:#374151;min-width:60px;text-align:right">'
-                f'{seen}</span>'
-                f'</div>',
-                unsafe_allow_html=True,
-            )
-        with col_actions:
-            action = st.selectbox(
-                "action", ["—", t("action.remove"), t("action.pause"), t("action.prioritize")],
-                key=f"action_{row['ticker']}_{idx}", label_visibility="collapsed",
-            )
-            if action == t("action.remove"):
-                execute_sql("UPDATE candidates SET status = 'removed' WHERE ticker = ?", (row["ticker"],))
-                st.rerun()
-            elif action == t("action.pause"):
-                execute_sql("UPDATE candidates SET status = 'paused' WHERE ticker = ?", (row["ticker"],))
-                st.rerun()
-            elif action == t("action.prioritize"):
-                execute_sql("UPDATE candidates SET status = 'prioritized' WHERE ticker = ?", (row["ticker"],))
-                st.rerun()
+        candidates_html += (
+            f'<div class="candidate-row">'
+            f'<span class="candidate-ticker">{row["ticker"]}{tags_html}</span>'
+            f'<span class="candidate-tier">{tier}</span>'
+            f'<div class="candidate-bar-wrap">'
+            f'<div class="candidate-bar-bg">'
+            f'<div class="candidate-bar-fill" style="width:{pct}%;background:{fill_color}"></div>'
+            f'</div>'
+            f'{badge}'
+            f'</div>'
+            f'<span style="font-size:11px;color:#374151;min-width:60px;text-align:right">'
+            f'{seen}</span>'
+            f'</div>'
+        )
+        candidate_tickers.append((idx, row["ticker"]))
+
+    st.markdown(candidates_html, unsafe_allow_html=True)
+
+    # Action dropdowns in a separate section (native Streamlit widgets)
+    if candidate_tickers:
+        with st.expander(t("action.manage_candidates")):
+            for idx, ticker in candidate_tickers:
+                col_t, col_a = st.columns([3, 2])
+                with col_t:
+                    st.text(ticker)
+                with col_a:
+                    action = st.selectbox(
+                        "action",
+                        ["—", t("action.remove"), t("action.pause"), t("action.prioritize")],
+                        key=f"action_{ticker}_{idx}",
+                        label_visibility="collapsed",
+                    )
+                    if action == t("action.remove"):
+                        execute_sql(
+                            "UPDATE candidates SET status = 'removed' WHERE ticker = ?",
+                            (ticker,),
+                        )
+                        st.rerun()
+                    elif action == t("action.pause"):
+                        execute_sql(
+                            "UPDATE candidates SET status = 'paused' WHERE ticker = ?",
+                            (ticker,),
+                        )
+                        st.rerun()
+                    elif action == t("action.prioritize"):
+                        execute_sql(
+                            "UPDATE candidates SET status = 'prioritized' WHERE ticker = ?",
+                            (ticker,),
+                        )
+                        st.rerun()
 
 
 # ── Alerts section ─────────────────────────────────────────────
@@ -666,12 +740,13 @@ def render_alerts():
         )
         return
 
+    alerts_html = ""
     for _, row in df.iterrows():
         sev = (row["severity"] or "INFO").upper()
         sev_cls = sev.lower()
         time_str = format_time_ago(row.get("timestamp", ""))
 
-        st.markdown(
+        alerts_html += (
             f'<div class="alert-card {sev_cls}">'
             f'<span class="alert-severity sev-{sev_cls}">{sev}</span>'
             f'<div class="alert-body">'
@@ -680,9 +755,10 @@ def render_alerts():
             f'<span style="color:#4a5568">— {row["message"] or ""}</span>'
             f'</div>'
             f'<span class="alert-time">{time_str}</span>'
-            f'</div>',
-            unsafe_allow_html=True,
+            f'</div>'
         )
+
+    st.markdown(alerts_html, unsafe_allow_html=True)
 
 
 # ── Stock Detail section ───────────────────────────────────────
@@ -1234,7 +1310,7 @@ def render_settings():
     col_test, col_save = st.columns(2)
     with col_test:
         if st.button(t("action.test_connection"), key="test_ibkr"):
-            st.info("Connection test requires TWS running. Save settings and start engine with --live flag.")
+            _run_connection_test(ibkr_host, int(ibkr_port))
     with col_save:
         if st.button(f'{t("action.save")} IBKR', key="save_ibkr"):
             cfg["ibkr"] = {"host": ibkr_host, "port": int(ibkr_port), "client_id": int(ibkr_client)}

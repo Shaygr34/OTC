@@ -91,11 +91,12 @@ class TickerWatcher:
                 await self._adapter.create_otc_contract(ticker, ex)
                 qualified_exchange = ex
                 break
-            except (ValueError, ConnectionError):
+            except (ValueError, ConnectionError, Exception) as e:
                 logger.debug(
                     "contract_qualify_failed",
                     ticker=ticker,
                     exchange=ex,
+                    error=str(e),
                 )
                 continue
 
@@ -106,13 +107,26 @@ class TickerWatcher:
             return
 
         # Subscribe to all data feeds
-        await self._adapter.subscribe_market_data(ticker, qualified_exchange)
-        await self._adapter.subscribe_l2_depth(ticker, qualified_exchange)
-        await self._adapter.subscribe_tick_by_tick(ticker, qualified_exchange)
+        try:
+            await self._adapter.subscribe_market_data(ticker, qualified_exchange)
+            await self._adapter.subscribe_l2_depth(ticker, qualified_exchange)
+            await self._adapter.subscribe_tick_by_tick(ticker, qualified_exchange)
+        except Exception as e:
+            logger.warning(
+                "ticker_subscribe_failed",
+                ticker=ticker,
+                exchange=qualified_exchange,
+                error=str(e),
+            )
+            # Don't add to _activated — retry on next poll
+            return
 
         # Seed historical bars
-        entry = WatchlistEntry(ticker=ticker, exchange=qualified_exchange)
-        await HistoryLoader.seed([entry], self._adapter, self._screener)
+        try:
+            entry = WatchlistEntry(ticker=ticker, exchange=qualified_exchange)
+            await HistoryLoader.seed([entry], self._adapter, self._screener)
+        except Exception:
+            logger.debug("history_seed_failed", ticker=ticker)
 
         # Determine price tier from historical data (use last close if available)
         price_tier = "UNKNOWN"

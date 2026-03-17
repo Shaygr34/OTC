@@ -17,6 +17,9 @@ env/
 # User config (local overrides, not committed)
 data/user_config.json
 
+# Engine status (written by running engine, read by dashboard)
+data/engine_status.json
+
 # Database
 *.db
 *.sqlite
