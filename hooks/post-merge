@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+# Scan for Google Fonts @import references after every git pull/merge.
+# Eldar's machine blocks fonts.googleapis.com (403), causing blank pages.
+#
+# Install: cp hooks/post-merge .git/hooks/post-merge && chmod +x .git/hooks/post-merge
+# Or run: bash scripts/install-hooks.sh
+
+set -euo pipefail
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+
+HITS=$(grep -rn '@import.*fonts\.googleapis\.com' \
+    --include="*.py" --include="*.css" --include="*.html" \
+    "$REPO_ROOT/src" "$REPO_ROOT/config" "$REPO_ROOT/scripts" 2>/dev/null || true)
+
+if [ -n "$HITS" ]; then
+    echo ""
+    echo "========================================"
+    echo "  WARNING: Google Fonts @import found!"
+    echo "========================================"
+    echo ""
+    echo "Eldar's machine blocks fonts.googleapis.com."
+    echo "These references will cause a blank dashboard page:"
+    echo ""
+    echo "$HITS"
+    echo ""
+    echo "The runtime sanitizer in app.py will strip these,"
+    echo "but they should be removed from source code."
+    echo "========================================"
+    echo ""
+fi

@@ -8,6 +8,10 @@ font = "sans serif"
 
 [server]
 headless = true
+enableStaticServing = false
+# Disable CORS and XSRF for local-only use (prevents WebSocket issues)
+enableCORS = false
+enableXsrfProtection = false
 
 [browser]
 gatherUsageStats = false
