@@ -1466,7 +1466,10 @@ def render_settings():
             conn = sqlite3.connect(str(db))
             for tbl in ("candidates", "trades", "l2_snapshots", "trade_log", "alerts", "daily_scores"):
                 conn.execute(f"DELETE FROM {tbl}")  # noqa: S608
-            conn.execute("DELETE FROM sqlite_sequence")
+            try:
+                conn.execute("DELETE FROM sqlite_sequence")
+            except sqlite3.OperationalError:
+                pass  # Table doesn't exist when AUTOINCREMENT isn't used
             conn.commit()
             conn.close()
             st.success(t("settings.data_cleared"))
