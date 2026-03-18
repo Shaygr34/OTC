@@ -5,8 +5,11 @@ RuleEngine → AlertDispatcher. Async main loop.
 """
 
 import asyncio
+import contextlib
+import json
 import os
 import signal
+from pathlib import Path
 
 import structlog
 
@@ -133,21 +136,19 @@ class SystemRunner:
         self.persistence.start()
         self.alert_dispatcher.start()
 
-        # Load active + manual candidates from DB and subscribe
+        # Load active candidates from DB and subscribe
         active_candidates = await self._repo.get_candidates_by_statuses(
-            ["active", "manual"]
+            ["active"]
         )
         for c in active_candidates:
             ex = getattr(c, "exchange", "PINK") or "PINK"
-            if c.status == "active":
-                try:
-                    await self.adapter.subscribe_market_data(c.ticker, ex)
-                    await self.adapter.subscribe_l2_depth(c.ticker, ex)
-                    await self.adapter.subscribe_tick_by_tick(c.ticker, ex)
-                except Exception:
-                    logger.warning("subscribe_failed", ticker=c.ticker)
-        active_count = sum(1 for c in active_candidates if c.status == "active")
-        logger.info("db_candidates_loaded", active=active_count)
+            try:
+                await self.adapter.subscribe_market_data(c.ticker, ex)
+                await self.adapter.subscribe_l2_depth(c.ticker, ex)
+                await self.adapter.subscribe_tick_by_tick(c.ticker, ex)
+            except Exception:
+                logger.warning("subscribe_failed", ticker=c.ticker)
+        logger.info("db_candidates_loaded", active=len(active_candidates))
 
         # Seed historical bars for active candidates
         if active_candidates:
@@ -157,7 +158,6 @@ class SystemRunner:
                     exchange=getattr(c, "exchange", "PINK") or "PINK",
                 )
                 for c in active_candidates
-                if c.status == "active"
             ]
             if entries:
                 loaded = await HistoryLoader.seed(entries, self.adapter, self.screener)
@@ -169,7 +169,29 @@ class SystemRunner:
         logger.info("ticker_watcher_started")
 
         self._running = True
+        self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         logger.info("system_started", modules=7, adapter=self._adapter_name)
+
+    async def _heartbeat_loop(self) -> None:
+        """Write engine status file every 10s so the dashboard can detect us."""
+        status_path = Path(__file__).resolve().parent.parent / "data" / "engine_status.json"
+        while self._running:
+            try:
+                status = {
+                    "running": True,
+                    "adapter": self._adapter_name,
+                    "ibkr_connected": self._adapter_name == "ibkr"
+                    and getattr(self.adapter, "is_connected", lambda: False)(),
+                    "ibkr_host": self._settings.ibkr.host,
+                    "ibkr_port": self._settings.ibkr.port,
+                }
+                status_path.write_text(json.dumps(status))
+            except Exception:
+                pass
+            await asyncio.sleep(10)
+        # Clean up on stop
+        with contextlib.suppress(OSError):
+            status_path.unlink()
 
     async def run(self) -> None:
         """Run the main loop until shutdown is signaled."""
@@ -189,6 +211,17 @@ class SystemRunner:
 
         logger.info("system_stopping")
         self._running = False
+
+        # Cancel heartbeat
+        if hasattr(self, "_heartbeat_task") and not self._heartbeat_task.done():
+            self._heartbeat_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._heartbeat_task
+
+        # Remove status file
+        status_path = Path(__file__).resolve().parent.parent / "data" / "engine_status.json"
+        with contextlib.suppress(OSError):
+            status_path.unlink()
 
         await self.ticker_watcher.stop()
         await self.adapter.disconnect()
