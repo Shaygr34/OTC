@@ -8,6 +8,7 @@ Hebrew/English bilingual with RTL support.
 
 import json
 import os
+import re
 import sqlite3
 from datetime import UTC, datetime
 from decimal import Decimal, InvalidOperation
@@ -26,6 +27,24 @@ from config.user_config import (
 )
 
 _DEFAULT_DB = Path(__file__).resolve().parent.parent.parent / "data" / "atm.db"
+
+# ── Google Fonts runtime sanitizer ────────────────────────────
+# Eldar's machine blocks fonts.googleapis.com (403).  Any @import
+# that references external font CDNs will cause blank pages.
+# This regex catches them at runtime so the page always renders,
+# even if someone accidentally adds a Google Fonts import in a
+# future commit.
+_GOOGLE_FONT_IMPORT_RE = re.compile(
+    r'@import\s+url\([^)]*fonts\.googleapis\.com[^)]*\)\s*;?',
+    re.IGNORECASE,
+)
+
+
+def _safe_html(html: str) -> str:
+    """Strip any @import url(...googleapis...) from HTML/CSS strings."""
+    return _GOOGLE_FONT_IMPORT_RE.sub(
+        "/* [ATM] external font blocked — using local fallback */", html
+    )
 
 
 # ── Theme & CSS ────────────────────────────────────────────────
@@ -1624,7 +1643,7 @@ def main():
     # Load language from config
     _load_lang_from_config()
 
-    st.markdown(_build_css(), unsafe_allow_html=True)
+    st.markdown(_safe_html(_build_css()), unsafe_allow_html=True)
 
     # Auto-refresh every 10 seconds (only when browser tab is visible)
     st_autorefresh(interval=10_000, limit=None, key="auto_refresh")
