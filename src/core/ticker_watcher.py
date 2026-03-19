@@ -22,6 +22,8 @@ logger = structlog.get_logger(__name__)
 POLL_INTERVAL_SECONDS = 5
 
 # Exchanges to try when qualifying a contract, in order.
+# The IBAdapter itself tries SMART first + multiple fallbacks, so these
+# are higher-level retries with different exchange hints.
 _EXCHANGE_FALLBACKS = ("PINK", "GREY")
 
 
