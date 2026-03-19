@@ -15,7 +15,7 @@ from src.core.events import L2UpdateEvent, MarketDataEvent, TradeEvent
 
 logger = structlog.get_logger(__name__)
 
-_VALID_EXCHANGES = {"PINK", "GREY", "OTC"}
+_VALID_EXCHANGES = {"SMART", "PINK", "GREY", "OTC", "VALUE", "PINKC"}
 
 
 @dataclass(frozen=True)
@@ -62,7 +62,10 @@ class MockAdapter(BrokerAdapter):
         self._ensure_connected()
         exchange = exchange.upper()
         if exchange not in _VALID_EXCHANGES:
-            raise ValueError(f"Invalid OTC exchange: {exchange!r} (expected PINK or GREY)")
+            raise ValueError(
+                f"Invalid OTC exchange: {exchange!r} "
+                f"(expected one of {', '.join(sorted(_VALID_EXCHANGES))})"
+            )
 
         if symbol in self._contracts:
             return self._contracts[symbol]

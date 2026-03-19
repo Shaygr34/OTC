@@ -17,8 +17,11 @@ from src.core.events import L2UpdateEvent, MarketDataEvent, TradeEvent
 
 logger = structlog.get_logger(__name__)
 
-_VALID_EXCHANGES = {"PINK", "GREY"}
 _MAX_BACKOFF = 60
+
+# Exchanges to try during contract qualification, in priority order.
+# SMART lets IBKR resolve the best routing; the rest are direct OTC exchanges.
+_QUALIFY_EXCHANGES = ("SMART", "PINK", "GREY", "OTC", "VALUE", "PINKC")
 
 
 class IBAdapter(BrokerAdapter):
@@ -76,27 +79,60 @@ class IBAdapter(BrokerAdapter):
     async def create_otc_contract(
         self, symbol: str, exchange: str = "PINK"
     ) -> object:
-        exchange = exchange.upper()
-        if exchange not in _VALID_EXCHANGES:
-            raise ValueError(f"Invalid OTC exchange: {exchange!r} (expected PINK or GREY)")
-
         if symbol in self._contracts:
             return self._contracts[symbol]
 
-        contract = Stock(symbol, exchange, "USD")
-        qualified = await self._ib.qualifyContractsAsync(contract)
-        if not qualified:
-            raise ValueError(f"Could not qualify contract for {symbol} on {exchange}")
+        # Build ordered list: SMART first, then the hint, then remaining fallbacks
+        hint = exchange.upper()
+        exchanges_to_try: list[str] = []
+        for ex in ("SMART", hint, *_QUALIFY_EXCHANGES):
+            if ex not in exchanges_to_try:
+                exchanges_to_try.append(ex)
 
-        self._contracts[symbol] = qualified[0]
-        logger.info("contract_qualified", symbol=symbol, exchange=exchange)
-        return qualified[0]
+        last_error: str = ""
+        for ex in exchanges_to_try:
+            contract = Stock(symbol, ex, "USD")
+            try:
+                qualified = await self._ib.qualifyContractsAsync(contract)
+            except Exception as exc:
+                last_error = f"{ex}: {exc}"
+                logger.debug(
+                    "contract_qualify_attempt_failed",
+                    symbol=symbol, exchange=ex, error=str(exc),
+                )
+                continue
+
+            # qualifyContractsAsync may return [] or [None] or [contract_with_conId_0]
+            resolved = qualified[0] if qualified else None
+            if resolved is None or getattr(resolved, "conId", 0) == 0:
+                last_error = f"{ex}: qualification returned empty/invalid contract"
+                logger.debug(
+                    "contract_qualify_attempt_failed",
+                    symbol=symbol, exchange=ex, error=last_error,
+                )
+                continue
+
+            self._contracts[symbol] = resolved
+            logger.info(
+                "contract_qualified",
+                symbol=symbol,
+                exchange=resolved.exchange,
+                conId=resolved.conId,
+                requested_exchange=ex,
+            )
+            return resolved
+
+        raise ValueError(
+            f"Could not qualify contract for {symbol} "
+            f"(tried {', '.join(exchanges_to_try)}; last: {last_error})"
+        )
 
     # ── Market data (L1) ─────────────────────────────────────────
 
     async def subscribe_market_data(self, symbol: str, exchange: str) -> None:
         self._ensure_connected()
         contract = await self.create_otc_contract(symbol, exchange)
+        self._ensure_valid_contract(contract, symbol)
         self._ib.reqMktData(contract)
         self._track_sub(symbol, "market_data")
         logger.info("subscribed_market_data", symbol=symbol)
@@ -115,6 +151,7 @@ class IBAdapter(BrokerAdapter):
     ) -> None:
         self._ensure_connected()
         contract = await self.create_otc_contract(symbol, exchange)
+        self._ensure_valid_contract(contract, symbol)
         self._ib.reqMktDepth(contract, numRows=num_rows, isSmartDepth=False)
         self._track_sub(symbol, "l2_depth")
         logger.info("subscribed_l2_depth", symbol=symbol, num_rows=num_rows)
@@ -133,6 +170,7 @@ class IBAdapter(BrokerAdapter):
     ) -> None:
         self._ensure_connected()
         contract = await self.create_otc_contract(symbol, exchange)
+        self._ensure_valid_contract(contract, symbol)
         self._ib.reqTickByTickData(contract, tick_type)
         self._track_sub(symbol, "tick_by_tick")
         logger.info("subscribed_tick_by_tick", symbol=symbol, tick_type=tick_type)
@@ -155,6 +193,7 @@ class IBAdapter(BrokerAdapter):
     ) -> list[dict]:
         self._ensure_connected()
         contract = await self.create_otc_contract(symbol, exchange)
+        self._ensure_valid_contract(contract, symbol)
         bars = await self._ib.reqHistoricalDataAsync(
             contract,
             endDateTime="",
@@ -300,6 +339,14 @@ class IBAdapter(BrokerAdapter):
     def _ensure_connected(self) -> None:
         if not self._ib.isConnected():
             raise ConnectionError("Not connected to IBKR")
+
+    @staticmethod
+    def _ensure_valid_contract(contract: object, symbol: str) -> None:
+        if contract is None or getattr(contract, "conId", 0) == 0:
+            raise ValueError(
+                f"Invalid contract for {symbol}: "
+                f"contract is {'None' if contract is None else 'unqualified'}"
+            )
 
     def _track_sub(self, symbol: str, sub_type: str) -> None:
         if symbol not in self._subscriptions:
