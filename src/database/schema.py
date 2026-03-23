@@ -21,8 +21,8 @@ class Candidate(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ticker: Mapped[str] = mapped_column(String, nullable=False, unique=True)
     price_tier: Mapped[str] = mapped_column(String, nullable=False)
-    first_seen: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-    last_scored: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
+    last_scored: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     atm_score: Mapped[str | None] = mapped_column(String, nullable=True)  # Decimal as text
     status: Mapped[str] = mapped_column(String, default="active")
     exchange: Mapped[str] = mapped_column(String, default="PINK")
@@ -34,7 +34,7 @@ class L2SnapshotRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ticker: Mapped[str] = mapped_column(String, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     bid_levels: Mapped[dict] = mapped_column(JSON, nullable=False)
     ask_levels: Mapped[dict] = mapped_column(JSON, nullable=False)
     imbalance_ratio: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -47,7 +47,7 @@ class TradeRow(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ticker: Mapped[str] = mapped_column(String, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     price: Mapped[str] = mapped_column(String, nullable=False)  # Decimal as text
     size: Mapped[int] = mapped_column(Integer, nullable=False)
     side: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -59,8 +59,8 @@ class TradeLog(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ticker: Mapped[str] = mapped_column(String, nullable=False)
-    timestamp_entry: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    timestamp_exit: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    timestamp_entry: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    timestamp_exit: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     entry_price: Mapped[str] = mapped_column(String, nullable=False)
     exit_price: Mapped[str | None] = mapped_column(String, nullable=True)
     shares: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -82,7 +82,7 @@ class Alert(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     ticker: Mapped[str] = mapped_column(String, nullable=False)
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    timestamp: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=lambda: datetime.now(UTC))
     alert_type: Mapped[str] = mapped_column(String, nullable=False)
     severity: Mapped[str] = mapped_column(String, nullable=False)
     message: Mapped[str | None] = mapped_column(Text, nullable=True)

@@ -7,8 +7,11 @@ from pydantic import Field
 from pydantic_settings import BaseSettings
 
 
+_ENV_FILE = ".env"
+
+
 class IBKRSettings(BaseSettings):
-    model_config = {"env_prefix": "IBKR_"}
+    model_config = {"env_prefix": "IBKR_", "env_file": _ENV_FILE, "extra": "ignore"}
 
     host: str = "127.0.0.1"
     port: int = 7497
@@ -18,7 +21,7 @@ class IBKRSettings(BaseSettings):
 
 
 class TelegramSettings(BaseSettings):
-    model_config = {"env_prefix": "TELEGRAM_"}
+    model_config = {"env_prefix": "TELEGRAM_", "env_file": _ENV_FILE, "extra": "ignore"}
 
     bot_token: str = ""
     chat_id: str = ""
@@ -26,13 +29,13 @@ class TelegramSettings(BaseSettings):
 
 
 class DatabaseSettings(BaseSettings):
-    model_config = {"env_prefix": "DATABASE_"}
+    model_config = {"env_prefix": "DATABASE_", "env_file": _ENV_FILE, "extra": "ignore"}
 
     url: str = "sqlite+aiosqlite:///data/atm.db"
 
 
 class RiskSettings(BaseSettings):
-    model_config = {"env_prefix": "RISK_"}
+    model_config = {"env_prefix": "RISK_", "env_file": _ENV_FILE, "extra": "ignore"}
 
     max_position_pct: Decimal = Field(default=Decimal("0.05"))
     max_loss_pct: Decimal = Field(default=Decimal("0.02"))
@@ -40,7 +43,7 @@ class RiskSettings(BaseSettings):
 
 
 class LogSettings(BaseSettings):
-    model_config = {"env_prefix": "LOG_"}
+    model_config = {"env_prefix": "LOG_", "env_file": _ENV_FILE, "extra": "ignore"}
 
     level: str = "INFO"
     format: str = "json"
