@@ -4,7 +4,7 @@ Consumes results from L2Analyzer, VolumeAnalyzer, TSAnalyzer,
 DilutionSentinel, and Screener. Publishes AnalysisCompleteEvent.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from pathlib import Path
 
@@ -154,6 +154,8 @@ class ScoringResult:
     ts_score: Decimal
     # Derived labels
     action: str  # "TRADE" | "WATCHLIST" | "PASS"
+    components_scored: int = 0
+    score_detail: dict = field(default_factory=dict)
 
 
 class RuleEngine:
@@ -216,6 +218,8 @@ class RuleEngine:
             volume_score=result.volume_score,
             dilution_score=result.dilution_score,
             ts_score=result.ts_score,
+            components_scored=result.components_scored,
+            score_detail=result.score_detail,
         )
         await self._event_bus.publish(analysis_event)
 
@@ -289,6 +293,43 @@ class RuleEngine:
         else:
             dil_pts = _ZERO
 
+        # ── Score detail tracking ─────────────────────────────────
+        has_stability = stability_result is not None
+        has_l2 = l2 is not None
+        has_vol = vol is not None
+        has_ts = ts is not None and ts.total_trades > 0
+        has_dil = dil is not None
+
+        detail: dict = {}
+        detail["stability"] = {
+            "score": float(stability_pts), "max": r.weight_stability, "has_data": has_stability,
+        }
+        detail["l2_imbalance"] = {
+            "score": float(l2_pts), "max": r.weight_l2_imbalance, "has_data": has_l2,
+        }
+        detail["no_bad_mm"] = {
+            "score": float(bad_mm_pts), "max": r.weight_no_bad_mm, "has_data": has_l2,
+        }
+        detail["no_volume_anomaly"] = {
+            "score": float(vol_anomaly_pts), "max": r.weight_no_volume_anomaly, "has_data": has_vol,
+        }
+        detail["consistent_volume"] = {
+            "score": float(consistent_vol_pts),
+            "max": r.weight_consistent_volume,
+            "has_data": has_vol,
+        }
+        detail["bid_support"] = {
+            "score": float(bid_support_pts), "max": r.weight_bid_support, "has_data": has_l2,
+        }
+        detail["ts_ratio"] = {
+            "score": float(ts_pts), "max": r.weight_ts_ratio, "has_data": has_ts,
+        }
+        detail["dilution_clear"] = {
+            "score": float(dil_pts), "max": r.weight_dilution_clear, "has_data": has_dil,
+        }
+
+        components_scored = sum(1 for d in detail.values() if d["has_data"])
+
         # ── Composite ────────────────────────────────────────────
         total = (
             stability_pts
@@ -321,4 +362,6 @@ class RuleEngine:
             dilution_score=dil_pts,
             ts_score=ts_pts,
             action=action,
+            components_scored=components_scored,
+            score_detail=detail,
         )

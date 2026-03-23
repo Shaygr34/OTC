@@ -55,6 +55,8 @@ class AnalysisCompleteEvent:
     volume_score: Decimal
     dilution_score: Decimal
     ts_score: Decimal
+    components_scored: int = 0
+    score_detail: dict = field(default_factory=dict)
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
 

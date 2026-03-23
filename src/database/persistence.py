@@ -98,6 +98,8 @@ class PersistenceSubscriber:
             volume_score=event.volume_score,
             dilution_score=event.dilution_score,
             ts_score=event.ts_score,
+            components_scored=event.components_scored,
+            score_detail=event.score_detail,
         )
 
     async def _on_scanner_hit(self, event: ScannerHitEvent) -> None:
