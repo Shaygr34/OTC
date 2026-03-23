@@ -23,6 +23,12 @@ _MAX_BACKOFF = 60
 # SMART lets IBKR resolve the best routing; the rest are direct OTC exchanges.
 _QUALIFY_EXCHANGES = ("SMART", "PINK", "GREY", "OTC", "VALUE", "PINKC")
 
+# OTC exchanges that provide MPID data in L2 depth.
+_OTC_EXCHANGES = ("PINK", "GREY", "OTC", "VALUE", "PINKC")
+
+# IBKR paper accounts allow at most 3 concurrent market depth subscriptions.
+_MAX_L2_SUBSCRIPTIONS = 3
+
 
 class IBAdapter(BrokerAdapter):
     """Real IBKR implementation using ib_async."""
@@ -36,7 +42,9 @@ class IBAdapter(BrokerAdapter):
         self._settings = settings or get_settings().ibkr
         self._ib = IB()
         self._contracts: dict[str, Stock] = {}
+        self._l2_contracts: dict[str, Stock] = {}  # separate OTC-exchange contracts for L2
         self._subscriptions: dict[str, set[str]] = {}
+        self._l2_active: list[str] = []  # ordered list of symbols with active L2 subs
         self._backoff = 1
         self._reconnecting = False
         self._background_tasks: set[asyncio.Task] = set()
@@ -68,7 +76,9 @@ class IBAdapter(BrokerAdapter):
         self._ib.errorEvent -= self._on_error
         self._ib.disconnect()
         self._contracts.clear()
+        self._l2_contracts.clear()
         self._subscriptions.clear()
+        self._l2_active.clear()
         logger.info("ibkr_disconnected")
 
     def is_connected(self) -> bool:
@@ -146,21 +156,96 @@ class IBAdapter(BrokerAdapter):
 
     # ── L2 depth ─────────────────────────────────────────────────
 
+    async def _create_l2_contract(self, symbol: str, exchange: str) -> Stock:
+        """Qualify a contract with primaryExchange set for L2 with MPIDs.
+
+        OTC stocks can't be qualified directly on PINK/GREY — they must go
+        through SMART. But we can set ``primaryExchange`` to tell IBKR which
+        venue to pull depth from, which preserves MPID data.
+        """
+        if symbol in self._l2_contracts:
+            return self._l2_contracts[symbol]
+
+        # Get the primary exchange from the already-qualified SMART contract
+        smart_contract = self._contracts.get(symbol)
+        primary = getattr(smart_contract, "primaryExchange", "") if smart_contract else ""
+
+        # Build list of primary exchanges to try
+        hint = exchange.upper() if exchange.upper() != "SMART" else ""
+        primaries_to_try: list[str] = []
+        for ex in (primary, hint, *_OTC_EXCHANGES):
+            if ex and ex not in primaries_to_try:
+                primaries_to_try.append(ex)
+
+        for pex in primaries_to_try:
+            contract = Stock(symbol, "SMART", "USD", primaryExchange=pex)
+            try:
+                qualified = await self._ib.qualifyContractsAsync(contract)
+            except Exception:
+                continue
+            resolved = qualified[0] if qualified else None
+            if resolved is not None and getattr(resolved, "conId", 0) > 0:
+                self._l2_contracts[symbol] = resolved
+                logger.info(
+                    "l2_contract_qualified",
+                    symbol=symbol,
+                    exchange=resolved.exchange,
+                    primaryExchange=pex,
+                    conId=resolved.conId,
+                )
+                return resolved
+
+        # Last resort: use the SMART contract (no MPIDs but still get depth)
+        if smart_contract and getattr(smart_contract, "conId", 0) > 0:
+            self._l2_contracts[symbol] = smart_contract
+            logger.warning(
+                "l2_contract_fallback_smart",
+                symbol=symbol,
+                msg="Using SMART contract for L2 — MPIDs may be unavailable",
+            )
+            return smart_contract
+
+        raise ValueError(
+            f"Could not qualify L2 contract for {symbol}"
+        )
+
     async def subscribe_l2_depth(
         self, symbol: str, exchange: str, num_rows: int = 5
     ) -> None:
         self._ensure_connected()
-        contract = await self.create_otc_contract(symbol, exchange)
+
+        # Enforce the concurrent L2 subscription limit
+        if symbol not in self._l2_active and len(self._l2_active) >= _MAX_L2_SUBSCRIPTIONS:
+            # Evict the oldest subscription to make room
+            evict = self._l2_active[0]
+            await self.unsubscribe_l2_depth(evict)
+            logger.info(
+                "l2_evicted_oldest",
+                evicted=evict,
+                reason=f"max {_MAX_L2_SUBSCRIPTIONS} reached, making room for {symbol}",
+            )
+
+        contract = await self._create_l2_contract(symbol, exchange)
         self._ensure_valid_contract(contract, symbol)
-        self._ib.reqMktDepth(contract, numRows=num_rows, isSmartDepth=False)
+        self._ib.reqMktDepth(contract, numRows=num_rows, isSmartDepth=True)
         self._track_sub(symbol, "l2_depth")
-        logger.info("subscribed_l2_depth", symbol=symbol, num_rows=num_rows)
+        if symbol not in self._l2_active:
+            self._l2_active.append(symbol)
+        logger.info(
+            "subscribed_l2_depth",
+            symbol=symbol,
+            exchange=contract.exchange,
+            num_rows=num_rows,
+            active_l2=len(self._l2_active),
+        )
 
     async def unsubscribe_l2_depth(self, symbol: str) -> None:
-        contract = self._contracts.get(symbol)
+        contract = self._l2_contracts.get(symbol)
         if contract:
-            self._ib.cancelMktDepth(contract, isSmartDepth=False)
+            self._ib.cancelMktDepth(contract, isSmartDepth=True)
             self._untrack_sub(symbol, "l2_depth")
+            if symbol in self._l2_active:
+                self._l2_active.remove(symbol)
             logger.info("unsubscribed_l2_depth", symbol=symbol)
 
     # ── Tick-by-tick (Time & Sales) ──────────────────────────────
@@ -310,6 +395,10 @@ class IBAdapter(BrokerAdapter):
         self._reconnecting = False
 
     async def _resubscribe_all(self) -> None:
+        # Clear L2 state — contracts need re-qualification after reconnect
+        self._l2_contracts.clear()
+        self._l2_active.clear()
+
         for symbol, sub_types in list(self._subscriptions.items()):
             contract = self._contracts.get(symbol)
             if not contract:

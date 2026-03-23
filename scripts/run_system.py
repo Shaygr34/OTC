@@ -22,7 +22,7 @@ from src.analysis.level2 import L2Analyzer
 from src.analysis.time_sales import TSAnalyzer
 from src.analysis.volume import VolumeAnalyzer
 from src.broker.history import HistoryLoader
-from src.broker.mock import MockAdapter
+from src.broker.ibkr import IBAdapter
 from src.core.event_bus import EventBus
 from src.core.ticker_watcher import TickerWatcher
 from src.database.persistence import PersistenceSubscriber
@@ -50,16 +50,9 @@ class SystemRunner:
         # ── Core ──
         self.event_bus = EventBus()
 
-        # ── Adapter selection ──
-        use_ibkr = os.environ.get("ATM_USE_IBKR", "").lower() in ("1", "true", "yes")
-        if use_ibkr:
-            from src.broker.ibkr import IBAdapter
-
-            self.adapter = IBAdapter(self.event_bus, self._settings.ibkr)
-            self._adapter_name = "ibkr"
-        else:
-            self.adapter = MockAdapter(self.event_bus)
-            self._adapter_name = "mock"
+        # ── Adapter — always real IBKR ──
+        self.adapter = IBAdapter(self.event_bus, self._settings.ibkr)
+        self._adapter_name = "ibkr"
 
         # ── Database ──
         self._engine = get_engine(self._settings.database.url)
