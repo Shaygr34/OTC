@@ -42,7 +42,7 @@ class SystemRunner:
     are registered via each module's ``start()`` method.
     """
 
-    def __init__(self, settings: Settings | None = None) -> None:
+    def __init__(self, settings: Settings | None = None, adapter=None) -> None:
         self._settings = settings or get_settings()
         self._running = False
         self._shutdown_event = asyncio.Event()
@@ -50,9 +50,13 @@ class SystemRunner:
         # ── Core ──
         self.event_bus = EventBus()
 
-        # ── Adapter — always real IBKR ──
-        self.adapter = IBAdapter(self.event_bus, self._settings.ibkr)
-        self._adapter_name = "ibkr"
+        # ── Adapter — injectable for tests, defaults to IBKR ──
+        if adapter is not None:
+            self.adapter = adapter
+            self._adapter_name = "injected"
+        else:
+            self.adapter = IBAdapter(self.event_bus, self._settings.ibkr)
+            self._adapter_name = "ibkr"
 
         # ── Database ──
         database_url = os.environ.get("DATABASE_URL", self._settings.database.url)

@@ -7,14 +7,29 @@ shutdown signaling, adapter connectivity.
 from decimal import Decimal
 from unittest.mock import AsyncMock
 
+import pytest
+
 from config.constants import PriceTier
 
 # Import after events to avoid circular
 from scripts.run_system import SystemRunner
+from src.broker.mock import MockAdapter
+from src.core.event_bus import EventBus
 from src.core.events import (
     AnalysisCompleteEvent,
 )
 from src.scanner.stability import DailyBar
+
+
+@pytest.fixture
+def mock_runner():
+    """Create a SystemRunner with MockAdapter injected (no IBKR needed)."""
+    runner = SystemRunner()
+    # Replace IBAdapter with MockAdapter for testing
+    mock_adapter = MockAdapter(runner.event_bus)
+    runner.adapter = mock_adapter
+    runner._adapter_name = "mock"
+    return runner
 
 # ── Construction Tests ───────────────────────────────────────────
 
@@ -37,32 +52,32 @@ class TestSystemConstruction:
         runner = SystemRunner()
         assert runner.is_running is False
 
-    def test_adapter_is_mock(self):
+    def test_adapter_is_ibkr(self):
         runner = SystemRunner()
-        from src.broker.mock import MockAdapter
-        assert isinstance(runner.adapter, MockAdapter)
+        from src.broker.ibkr import IBAdapter
+        assert isinstance(runner.adapter, IBAdapter)
 
 
 # ── Lifecycle Tests ──────────────────────────────────────────────
 
 
 class TestLifecycle:
-    async def test_start_connects_adapter(self):
-        runner = SystemRunner()
+    async def test_start_connects_adapter(self, mock_runner):
+        runner = mock_runner
         await runner.start()
         assert runner.adapter.is_connected()
         assert runner.is_running is True
         await runner.stop()
 
-    async def test_stop_disconnects_adapter(self):
-        runner = SystemRunner()
+    async def test_stop_disconnects_adapter(self, mock_runner):
+        runner = mock_runner
         await runner.start()
         await runner.stop()
         assert runner.adapter.is_connected() is False
         assert runner.is_running is False
 
-    async def test_stop_idempotent(self):
-        runner = SystemRunner()
+    async def test_stop_idempotent(self, mock_runner):
+        runner = mock_runner
         await runner.start()
         await runner.stop()
         await runner.stop()  # should not raise
@@ -78,9 +93,9 @@ class TestLifecycle:
 
 
 class TestEventFlow:
-    async def test_market_data_reaches_screener(self):
+    async def test_market_data_reaches_screener(self, mock_runner):
         """MarketDataEvent flows through to screener."""
-        runner = SystemRunner()
+        runner = mock_runner
         await runner.start()
 
         # Seed bars so screener can evaluate
@@ -100,9 +115,9 @@ class TestEventFlow:
 
         await runner.stop()
 
-    async def test_l2_update_reaches_analyzer(self):
+    async def test_l2_update_reaches_analyzer(self, mock_runner):
         """L2UpdateEvent flows through to L2Analyzer."""
-        runner = SystemRunner()
+        runner = mock_runner
         await runner.start()
 
         await runner.adapter.push_l2_update(
@@ -122,9 +137,9 @@ class TestEventFlow:
 
         await runner.stop()
 
-    async def test_trade_reaches_ts_analyzer(self):
+    async def test_trade_reaches_ts_analyzer(self, mock_runner):
         """TradeEvent flows through to TSAnalyzer."""
-        runner = SystemRunner()
+        runner = mock_runner
         await runner.start()
 
         await runner.adapter.push_trade(
@@ -140,9 +155,9 @@ class TestEventFlow:
 
         await runner.stop()
 
-    async def test_full_pipeline_scanner_to_analysis(self):
+    async def test_full_pipeline_scanner_to_analysis(self, mock_runner):
         """Full flow: seed data → market event → scanner hit → rule engine."""
-        runner = SystemRunner()
+        runner = mock_runner
         await runner.start()
 
         # Seed stable bars + volume history
@@ -200,9 +215,9 @@ class TestEventFlow:
 
         await runner.stop()
 
-    async def test_alerts_dispatched_on_volume_anomaly(self):
+    async def test_alerts_dispatched_on_volume_anomaly(self, mock_runner):
         """Volume anomaly → AlertEvent → dispatcher."""
-        runner = SystemRunner()
+        runner = mock_runner
         await runner.start()
 
         # Seed low volume history

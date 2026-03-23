@@ -146,7 +146,9 @@ class TestTickerWatcherWithSystemRunner:
 
     async def test_system_start_starts_watcher(self):
         from scripts.run_system import SystemRunner
+        from src.broker.mock import MockAdapter
         runner = SystemRunner()
+        runner.adapter = MockAdapter(runner.event_bus)
         await runner.start()
         assert runner.ticker_watcher._task is not None
         assert not runner.ticker_watcher._task.done()
