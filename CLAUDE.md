@@ -523,8 +523,10 @@ CREATE TABLE daily_scores (
 - **Host**: 127.0.0.1
 - **Separate client IDs**: scanner = 1, data recorder = 2
 - **Auto-reconnect**: exponential backoff on disconnect
-- **OTC contract**: `Stock(symbol, "PINK", "USD")` or `Stock(symbol, "GREY", "USD")`
-- **L2 data**: `reqMktDepth()` returns `marketMaker` (MPID) field
+- **OTC contract qualification**: SMART-first routing — OTC stocks can't qualify directly on PINK/GREY, must go through SMART. `primaryExchange` set to preserve venue attribution.
+- **L2 data**: `reqMktDepth()` with `isSmartDepth=True` — required to get MPID (marketMaker) data. `isSmartDepth=False` returns empty MPIDs for OTC stocks.
+- **L2 depth limit**: IBKR paper allows max 3 concurrent `reqMktDepth` subscriptions. IBAdapter manages a 3-slot queue with LRU eviction — oldest L2 sub is cancelled when a 4th ticker needs depth.
+- **L2 contract**: Separate `_l2_contracts` dict stores contracts qualified with `primaryExchange` set (e.g., `Stock(sym, "SMART", "USD", primaryExchange="PINK")`). This is needed because the standard SMART-qualified contract may not carry venue-specific depth.
 - **T&S data**: `reqTickByTickData()`
 - **Orders**: LIMIT GTC only. Never MARKET orders.
 
@@ -565,7 +567,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**327 tests passing across 16 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard (Settings, Wizard, Watchlist, Trade Log, Hebrew/RTL) deployed. Eldar running locally.**
+**327 tests passing across 16 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard deployed. Live IBKR data flow validated (Phase 12) — real L2 with MPIDs, real scores, real persistence confirmed against TWS.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -658,7 +660,8 @@ Each module should be independently testable before integration.
 ### Phase 8 — System Runner (12 tests)
 - `scripts/run_system.py` — SystemRunner:
   - Composition root wiring all modules in dependency order
-  - EventBus → MockAdapter → Screener → L2/Volume/TS Analyzers → DilutionSentinel → RuleEngine → DatabasePersistence → AlertDispatcher
+  - EventBus → IBAdapter → Screener → L2/Volume/TS Analyzers → DilutionSentinel → RuleEngine → DatabasePersistence → AlertDispatcher
+  - Always uses IBAdapter (MockAdapter removed as default — Phase 12)
   - Async lifecycle: start() → run() → stop() with SIGINT/SIGTERM handlers
   - Windows-compatible signal handling (signal.signal fallback for SIGINT)
   - Telegram integration optional (disabled by default)
@@ -706,6 +709,29 @@ Each module should be independently testable before integration.
 - `data/user_config.json` — local user overrides (gitignored), takes priority over `.env`
 - **Dashboard uses sync sqlite3** (not async SQLAlchemy) — appropriate for read-heavy Streamlit UI
 - **User config merges over defaults** — `config/user_config.py` deep-merges JSON overrides on top of `constants.py` defaults. Changes take effect immediately on Streamlit rerun.
+
+### Phase 12 — Live IBKR Data Flow (2026-03-23)
+
+First end-to-end live test against real TWS. Validated full pipeline with real OTC market data.
+
+**Code changes:**
+- `scripts/run_system.py` — removed MockAdapter as default, always uses IBAdapter. Removed `ATM_USE_IBKR` env var check.
+- `src/broker/ibkr.py` — two fixes:
+  1. **L2 depth limit management**: IBKR paper allows max 3 concurrent `reqMktDepth` streams. Added `_l2_active` list tracking active L2 subs, LRU eviction when limit reached (`_MAX_L2_SUBSCRIPTIONS = 3`).
+  2. **MPID fix**: `isSmartDepth=False` returns empty `marketMaker` fields for OTC. Switched to `isSmartDepth=True` which populates MPIDs (CDEL, ETRF, GTSM, CSTI, NITE, etc.). Added `_create_l2_contract()` that qualifies a separate contract with `primaryExchange` set for venue-attributed depth. Falls back to SMART contract if OTC qualification fails.
+
+**Live test results (tickers tested: CBDD, HADV, MWWC, CEIN, AGYP):**
+- TWS server v178, paper account U21464598
+- Contract qualification: all OTC stocks qualify via SMART routing only (direct PINK/GREY fails)
+- L2 depth: real MPIDs flowing — CDEL, ETRF, GTSM, CSTI, NITE, INTL, OTCN, PUMA, VERT
+- T&S: trade events with bid/ask side classification working
+- Historical bars: 29-30 daily bars loaded per ticker
+- Scoring pipeline: MWWC scored 50→72(WATCHLIST)→80(TRADE) in real-time as L2 data accumulated
+- MWWC L2: 332M bid vs 62M ask (5.3:1 ratio), all neutral/good MMs, TRADE threshold hit
+- CEIN L2: VERT (bad MM) detected on ask side — dilution sentinel can now flag this
+- All data persisted to SQLite: L2 snapshots, trades, daily scores, candidates
+
+**Known limitation:** Startup L2 subscriptions in `run_system.py` don't go through the limit manager — existing `active` candidates subscribe before TickerWatcher, which can exceed the 3-slot limit for the first batch.
 
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
