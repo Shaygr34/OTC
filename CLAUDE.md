@@ -14,10 +14,24 @@ The owner is a systems-level thinker and project architect, not a beginner. They
 
 ---
 
-## Current Phase: v0.5 — Product Polish (v0 engine complete)
+## Current Phase: v0.5 — Product Polish + Validation (v0 engine complete)
 
-v0 engine is **complete** — all 9 analysis/infrastructure modules built and tested (312 engine tests).
-v0.5 focuses on the **product layer** — making it a daily-driver tool for Eldar. V1 dashboard deployed (Phase 11): Settings, Wizard, Watchlist management, Trade Logger, Hebrew/RTL. Eldar running locally as of 2026-03-17.
+v0 engine is **complete** — all 9 analysis/infrastructure modules built and tested (360 tests).
+v0.5 focuses on the **product layer** and **scoring validation**. Phase 13 (2026-03-23): migrated to shared infrastructure — Railway PostgreSQL + Next.js dashboard on Vercel. Both Shay and Eldar see the same app at the same URL.
+
+### Shared Infrastructure (LIVE — as of 2026-03-23)
+
+- **Dashboard**: https://dashboard-bay-delta-68.vercel.app (Next.js on Vercel)
+- **Database**: Railway PostgreSQL (`centerbeam.proxy.rlwy.net:35200`)
+- **Engine**: runs on Eldar's machine with TWS, writes to Railway PG
+- **Workflow**: Eldar pushes to main via Claude Code, Shay pulls. No PR gate.
+
+### Current Status
+
+- Engine validated with real IBKR data (MWWC scored 60/100 with 70s of data, previously hit 80/100 TRADE with longer run)
+- Dashboard shows watchlist, ticker detail (score breakdown, L2 depth with MPIDs, T&S, ATM plan), alerts
+- **Next milestone**: First full trading session — Eldar runs engine continuously during market hours with 5-10 tickers
+- **Goal**: collect scoring data across multiple tickers over multiple sessions → validate/calibrate thresholds
 
 The system does NOT make entry decisions or execute trades. The human trades manually based on the system's output.
 
@@ -47,7 +61,8 @@ The system does NOT make entry decisions or execute trades. The human trades man
 |-----------|--------|--------|
 | Language | Python 3.12+ | Only viable option for IBKR + OTC |
 | Broker API | `ib_async` (successor to `ib_insync`) | IBKR is the only broker with OTC L2 + MPID via API |
-| Database | SQLite (dev) → TimescaleDB (prod) | Zero setup for v0, migration path clear |
+| Database | Railway PostgreSQL (prod), SQLite (tests) | Shared cloud DB, both devs see same data |
+| Dashboard | Next.js 16 + Tailwind + SWR on Vercel | Dark trading terminal UI, 5s auto-refresh |
 | Config | Pydantic v2 + `python-dotenv` | Type-safe settings, env separation |
 | Logging | `structlog` | Structured JSON logs |
 | Alerts | `python-telegram-bot` v21+ | Free, async, reliable |
@@ -154,21 +169,24 @@ atm-trading-engine/
 │   │   └── persistence.py   # PersistenceSubscriber (event→DB routing)
 │   └── dashboard/
 │       └── app.py           # Streamlit dashboard (V1 — 4 tabs, wizard, Hebrew/RTL)
-├── tests/                   # 16 test files, 327 tests
+├── tests/                   # 21 test files, 360 tests
 ├── scripts/
 │   ├── run_system.py        # Main engine entry point
-│   ├── run_dashboard.py     # Dashboard launcher
-│   ├── seed_realistic.py    # Demo data seeder (20 candidates, 7-day history)
-│   └── seed_demo_data.py    # Simple demo data seeder
-├── data/
-│   ├── atm.db               # SQLite database (gitignored)
-│   └── user_config.json     # User overrides (gitignored)
+│   ├── run_dashboard.py     # Streamlit dashboard launcher (legacy)
+│   ├── seed_realistic.py    # Demo data seeder
+│   └── clear_mock_data.py   # DB cleanup script
+├── dashboard/               # NEW — Next.js dashboard (deploys to Vercel)
+│   ├── src/app/             # App Router pages (Watchlist, Ticker Detail, Alerts)
+│   ├── src/components/      # ScoreBar, L2DepthPanel, TSFeed, ATMPlan, etc.
+│   ├── src/lib/             # db.ts (PG pool), queries.ts, hooks.ts (SWR), types.ts
+│   └── src/app/api/         # API routes: candidates, ticker/[symbol], alerts, health
+├── shared/
+│   └── schema.sql           # Canonical PostgreSQL schema (6 tables + indexes)
+├── data/                    # Local data (gitignored, legacy — PG is now primary)
 ├── logs/
-├── .env                     # Environment variables (gitignored)
-├── .env.example             # Template for .env
-├── .gitignore
-├── setup.sh                 # One-command bootstrap
-├── start.sh                 # Launch engine + dashboard
+├── .env                     # Engine env vars (gitignored) — DATABASE_URL points to Railway PG
+├── .env.example
+├── vercel.json              # Vercel config
 ├── requirements.txt
 ├── pyproject.toml
 └── ruff.toml
@@ -733,9 +751,44 @@ First end-to-end live test against real TWS. Validated full pipeline with real O
 
 **Known limitation:** Startup L2 subscriptions in `run_system.py` don't go through the limit manager — existing `active` candidates subscribe before TickerWatcher, which can exceed the 3-slot limit for the first batch.
 
+### Phase 13 — Shared Infrastructure + Dashboard Rebuild (2026-03-23)
+
+Migrated from local SQLite + Streamlit to shared cloud infrastructure. Both Shay and Eldar now see the same app and data.
+
+**Architecture change:**
+```
+Eldar's machine (TWS + Engine) → Railway PostgreSQL ← Vercel Dashboard (Next.js)
+```
+
+**Database migration:**
+- SQLite → Railway PostgreSQL (`centerbeam.proxy.rlwy.net:35200`)
+- `repository.py` now dual-dialect: `_insert_for()` selects `pg_insert` or `sqlite_insert` based on `use_postgres` flag
+- Tests use SQLite in-memory (`use_postgres=False`), production uses PG
+- Pydantic settings needed `env_file=".env"` fix (wasn't loading .env)
+- SQLAlchemy `DateTime` needed `timezone=True` for PG `TIMESTAMPTZ`
+
+**Score transparency:**
+- `AnalysisCompleteEvent` + `ScoringResult` + `DailyScore` now carry `components_scored` (int) and `score_detail` (JSONB)
+- `score_detail` tracks per-component `{score, max, has_data}` for all 8 scoring components
+- Dashboard shows data completeness: "7/8 components scored"
+
+**Next.js dashboard (`dashboard/`):**
+- 3 pages: Watchlist (home), Ticker Detail (`/ticker/[symbol]`), Alerts
+- Components: ScoreBar, ScoreBreakdown, L2DepthPanel (bad MMs red-highlighted), TSFeed, ATMPlan, ConnectionStatus
+- API routes: `GET/POST /api/candidates`, `GET /api/ticker/[symbol]`, `GET /api/alerts`, `GET /api/health`
+- SWR polling every 5 seconds, dark trading terminal theme
+- PG connection pool (`pg.Pool`, max 5, idle timeout 10s)
+- Deployed: https://dashboard-bay-delta-68.vercel.app
+
+**Streamlit dashboard** (`src/dashboard/app.py`) is now **legacy** — kept in repo but not the primary interface.
+
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
 - Prop bid detection (constants exist, implementation deferred)
+- Trade logging page on new dashboard (exists in Streamlit V1, deferred)
+- Historical score trend charts (need multi-session data first)
+- Telegram score change notifications
+- Session summaries
 
 ---
 
@@ -801,24 +854,19 @@ Do not build ahead. Stay in current phase until explicitly told to advance.
 ## Running the System
 
 ```bash
-# First-time setup (creates venv, installs deps, seeds demo data)
-bash setup.sh
+# Engine (Eldar's machine — TWS must be running on port 7497)
+.venv/bin/python scripts/run_system.py
 
-# Start engine + dashboard together (mock mode)
-bash start.sh
+# Dashboard (Vercel — auto-deployed on push to main)
+# https://dashboard-bay-delta-68.vercel.app
 
-# Start with real IBKR data (TWS must be running on port 7497)
-bash start.sh --live
+# Dashboard local dev (optional)
+cd dashboard && npm run dev   # http://localhost:3000
 
-# Or run individually:
-.venv/bin/python scripts/run_system.py              # engine only
-.venv/bin/python scripts/run_dashboard.py --port 8501  # dashboard only
-ATM_USE_IBKR=1 .venv/bin/python scripts/run_system.py  # engine with IBKR
+# Legacy Streamlit dashboard (still works locally)
+.venv/bin/python scripts/run_dashboard.py --port 8501
 
-# Re-seed demo data
-.venv/bin/python scripts/seed_realistic.py
-
-# Tests
+# Tests (360 passing, uses SQLite in-memory)
 .venv/bin/pytest tests/ -x -q
 
 # Lint
@@ -826,19 +874,25 @@ ATM_USE_IBKR=1 .venv/bin/python scripts/run_system.py  # engine with IBKR
 ```
 
 ### Config files
-- `.env` — environment variables (copy from `.env.example`)
-- `data/user_config.json` — user overrides (created by wizard/settings, gitignored, takes priority over .env)
-- `config/watchlist.yaml` — tickers to monitor (engine-side; dashboard manages watchlist via DB)
+- `.env` — engine env vars (gitignored). Key: `DATABASE_URL=postgresql+asyncpg://...`
+- `dashboard/.env.local` — dashboard env vars (gitignored). Key: `DATABASE_URL=postgresql://...` (no `+asyncpg`)
 - `config/rules.yaml` — scoring weights and thresholds
 - `config/constants.py` — all hardcoded thresholds and MM lists
-- `config/i18n.py` — Hebrew/English UI strings
-- `config/user_config.py` — JSON config loader/saver with deep merge
+- `shared/schema.sql` — canonical PostgreSQL schema
 
-### Co-founder deployment
-Eldar runs TWS on his machine. To set up his environment:
-1. Install Python 3.12+ and Git
-2. `git clone <repo> && cd OTC && bash setup.sh`
-3. Edit `.env` -> `ATM_USE_IBKR=1`, edit `config/watchlist.yaml` with tickers
-4. `bash start.sh --live`
+### Two DATABASE_URL formats
+Engine (Python/SQLAlchemy): `postgresql+asyncpg://user:pass@host:port/db`
+Dashboard (Next.js/pg): `postgresql://user:pass@host:port/db` (no driver prefix)
 
-A hand-off prompt for his Claude Code CLI is available to automate the full setup.
+### Deployment topology
+- **Engine**: runs on Eldar's machine alongside TWS. Writes to Railway PG.
+- **Dashboard**: Vercel auto-deploys from `dashboard/` on push to main. Reads from Railway PG.
+- **Database**: Railway PostgreSQL. Single source of truth.
+
+### Workflow
+- Eldar: prompts Claude Code → code changes → `git push origin main`
+- Shay: `git pull origin main` to sync
+- Vercel auto-deploys dashboard on every push to main
+- No branch/PR ceremony — direct main collaboration
+
+**Current status (2026-03-23):** Shared infrastructure live. Eldar's engine connected to Railway PG, dashboard on Vercel showing real data. First full trading session planned for 2026-03-24.
