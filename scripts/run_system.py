@@ -55,9 +55,11 @@ class SystemRunner:
         self._adapter_name = "ibkr"
 
         # ── Database ──
-        self._engine = get_engine(self._settings.database.url)
+        database_url = os.environ.get("DATABASE_URL", self._settings.database.url)
+        use_postgres = "postgresql" in database_url
+        self._engine = get_engine(database_url)
         self._session_factory = get_session_factory(self._engine)
-        self._repo = Repository(self._session_factory)
+        self._repo = Repository(self._session_factory, use_postgres=use_postgres)
         self.persistence = PersistenceSubscriber(self._repo, self.event_bus)
 
         # ── Scanner ──

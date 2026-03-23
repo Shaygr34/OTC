@@ -5,6 +5,7 @@ structlog>=24.1
 sqlalchemy[asyncio]>=2.0
 greenlet>=3.0
 aiosqlite>=0.20
+asyncpg>=0.29
 ib_async>=1.0
 python-telegram-bot>=21
 prometheus-client>=0.20

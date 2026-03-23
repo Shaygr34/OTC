@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from decimal import Decimal
 
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -33,8 +34,15 @@ def get_session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]
 
 
 class Repository:
-    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession], *, use_postgres: bool = False) -> None:
         self._session_factory = session_factory
+        self._use_pg = use_postgres
+
+    def _insert_for(self, table):
+        """Return dialect-appropriate insert construct."""
+        if self._use_pg:
+            return pg_insert(table)
+        return sqlite_insert(table)
 
     # -- Candidates ----------------------------------------------------------
 
@@ -252,6 +260,8 @@ class Repository:
         dilution_score: Decimal | None = None,
         ts_score: Decimal | None = None,
         ohi_score: Decimal | None = None,
+        components_scored: int | None = None,
+        score_detail: dict | None = None,
     ) -> None:
         """Insert or update daily score by UNIQUE(ticker, date)."""
         values = {
@@ -264,11 +274,13 @@ class Repository:
             "dilution_score": str(dilution_score) if dilution_score is not None else None,
             "ts_score": str(ts_score) if ts_score is not None else None,
             "ohi_score": str(ohi_score) if ohi_score is not None else None,
+            "components_scored": components_scored,
+            "score_detail": score_detail,
         }
         update_cols = {k: v for k, v in values.items() if k not in ("ticker", "date")}
         async with self._session_factory() as session:
             stmt = (
-                sqlite_insert(DailyScore)
+                self._insert_for(DailyScore)
                 .values(**values)
                 .on_conflict_do_update(
                     index_elements=["ticker", "date"],
@@ -297,7 +309,7 @@ class Repository:
         }
         async with self._session_factory() as session:
             stmt = (
-                sqlite_insert(Candidate)
+                self._insert_for(Candidate)
                 .values(**values)
                 .on_conflict_do_update(
                     index_elements=["ticker"],

@@ -102,6 +102,8 @@ class DailyScore(Base):
     dilution_score: Mapped[str | None] = mapped_column(String, nullable=True)
     ts_score: Mapped[str | None] = mapped_column(String, nullable=True)
     ohi_score: Mapped[str | None] = mapped_column(String, nullable=True)
+    components_scored: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    score_detail: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     __table_args__ = (UniqueConstraint("ticker", "date"),)
 
