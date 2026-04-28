@@ -540,13 +540,15 @@ CREATE TABLE daily_scores (
 - **Live port**: 7496
 - **Host**: 127.0.0.1
 - **Separate client IDs**: scanner = 1, data recorder = 2
-- **Auto-reconnect**: exponential backoff on disconnect
+- **Auto-reconnect**: exponential backoff on disconnect, max 50 attempts then `sys.exit(1)` (Docker `restart: always` handles the retry)
 - **OTC contract qualification**: SMART-first routing — OTC stocks can't qualify directly on PINK/GREY, must go through SMART. `primaryExchange` set to preserve venue attribution.
 - **L2 data**: `reqMktDepth()` with `isSmartDepth=True` — required to get MPID (marketMaker) data. `isSmartDepth=False` returns empty MPIDs for OTC stocks.
-- **L2 depth limit**: IBKR paper allows max 3 concurrent `reqMktDepth` subscriptions. IBAdapter manages a 3-slot queue with LRU eviction — oldest L2 sub is cancelled when a 4th ticker needs depth.
+- **L2 depth limit**: IBKR paper allows max 3 concurrent `reqMktDepth` subscriptions. IBAdapter manages a 2-slot queue (1 reserved for TWS manual viewing) with LRU eviction. Configurable via `IBKR_MAX_L2_SUBSCRIPTIONS`.
 - **L2 contract**: Separate `_l2_contracts` dict stores contracts qualified with `primaryExchange` set (e.g., `Stock(sym, "SMART", "USD", primaryExchange="PINK")`). This is needed because the standard SMART-qualified contract may not carry venue-specific depth.
 - **T&S data**: `reqTickByTickData()`
 - **Orders**: LIMIT GTC only. Never MARKET orders.
+- **IB Gateway (Docker)**: Paper socat port: 4004, Live socat port: 4003. The gnzsnz/ib-gateway image uses socat to remap internal ports (4001/4002) to external (4003/4004). Container-to-container connections use socat ports.
+- **Docker deployment**: `docker-compose.yml` at repo root. IB Gateway + engine. See `docs/superpowers/specs/2026-04-28-vps-ib-gateway-design.md`.
 
 ---
 
@@ -585,7 +587,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**327 tests passing across 16 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard deployed. Live IBKR data flow validated (Phase 12) — real L2 with MPIDs, real scores, real persistence confirmed against TWS.**
+**362 tests passing across 22 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard deployed. Live IBKR data flow validated (Phase 12) — real L2 with MPIDs, real scores, real persistence confirmed against TWS. Phase 14: containerized for always-on VPS deployment.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -782,6 +784,24 @@ Eldar's machine (TWS + Engine) → Railway PostgreSQL ← Vercel Dashboard (Next
 
 **Streamlit dashboard** (`src/dashboard/app.py`) is now **legacy** — kept in repo but not the primary interface.
 
+### Phase 14 — VPS + IB Gateway Containerization (2026-04-28)
+
+Always-on deployment: engine containerized with Docker, runs alongside IB Gateway on Hetzner VPS.
+
+**Code changes:**
+- `Dockerfile` — Python 3.12-slim engine image
+- `docker-compose.yml` — IB Gateway (gnzsnz/ib-gateway:stable) + engine, bridge network, healthcheck
+- `.dockerignore` — excludes tests, docs, dashboard, data
+- `.env.production.example` + `.env.gateway.example` — VPS env templates
+- `src/broker/ibkr.py` — max reconnect attempts (50), sys.exit(1) for Docker restart
+- Merged `fix/l2-reserve-slot-for-tws` — L2 slots configurable via `IBKR_MAX_L2_SUBSCRIPTIONS` (default 2)
+
+**Topology:**
+- Engine: Hetzner VPS Docker container → connects to IB Gateway container on socat port 4004 (paper)
+- Database: Railway PostgreSQL (unchanged)
+- Dashboard: Vercel (unchanged)
+- Eldar's laptop: optional — uses dashboard + TWS for manual trading
+
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
 - Prop bid detection (constants exist, implementation deferred)
@@ -866,7 +886,12 @@ cd dashboard && npm run dev   # http://localhost:3000
 # Legacy Streamlit dashboard (still works locally)
 .venv/bin/python scripts/run_dashboard.py --port 8501
 
-# Tests (360 passing, uses SQLite in-memory)
+# Docker deployment (VPS — IB Gateway + Engine, always-on)
+docker compose up -d              # start both containers
+docker compose logs -f atm-engine # follow engine logs
+docker compose down               # stop everything
+
+# Tests (362 passing, uses SQLite in-memory)
 .venv/bin/pytest tests/ -x -q
 
 # Lint
@@ -895,4 +920,4 @@ Dashboard (Next.js/pg): `postgresql://user:pass@host:port/db` (no driver prefix)
 - Vercel auto-deploys dashboard on every push to main
 - No branch/PR ceremony — direct main collaboration
 
-**Current status (2026-03-23):** Shared infrastructure live. Eldar's engine connected to Railway PG, dashboard on Vercel showing real data. First full trading session planned for 2026-03-24.
+**Current status (2026-04-28):** Engine containerized for VPS deployment (Phase 14). Docker Compose stack: IB Gateway + engine on Hetzner VPS. Reconnect bug fixed (max 50 attempts). L2 slots configurable. First trading session ran March 25 (7h, 7 tickers). Next: provision VPS, deploy, then build automated scanner.
