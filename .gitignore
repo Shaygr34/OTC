@@ -13,6 +13,8 @@ env/
 
 # Environment / secrets
 .env
+.env.production
+.env.gateway
 
 # User config (local overrides, not committed)
 data/user_config.json
@@ -42,3 +44,4 @@ Thumbs.db
 .pytest_cache/
 .coverage
 htmlcov/
+.vercel
