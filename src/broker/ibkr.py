@@ -27,7 +27,8 @@ _QUALIFY_EXCHANGES = ("SMART", "PINK", "GREY", "OTC", "VALUE", "PINKC")
 _OTC_EXCHANGES = ("PINK", "GREY", "OTC", "VALUE", "PINKC")
 
 # IBKR paper accounts allow at most 3 concurrent market depth subscriptions.
-_MAX_L2_SUBSCRIPTIONS = 3
+# Reserve 1 slot for manual TWS L2 viewing — engine uses 2.
+_MAX_L2_SUBSCRIPTIONS = 2
 
 
 class IBAdapter(BrokerAdapter):
@@ -45,6 +46,7 @@ class IBAdapter(BrokerAdapter):
         self._l2_contracts: dict[str, Stock] = {}  # separate OTC-exchange contracts for L2
         self._subscriptions: dict[str, set[str]] = {}
         self._l2_active: list[str] = []  # ordered list of symbols with active L2 subs
+        self._max_l2 = self._settings.max_l2_subscriptions
         self._backoff = 1
         self._reconnecting = False
         self._background_tasks: set[asyncio.Task] = set()
@@ -215,14 +217,14 @@ class IBAdapter(BrokerAdapter):
         self._ensure_connected()
 
         # Enforce the concurrent L2 subscription limit
-        if symbol not in self._l2_active and len(self._l2_active) >= _MAX_L2_SUBSCRIPTIONS:
+        if symbol not in self._l2_active and len(self._l2_active) >= self._max_l2:
             # Evict the oldest subscription to make room
             evict = self._l2_active[0]
             await self.unsubscribe_l2_depth(evict)
             logger.info(
                 "l2_evicted_oldest",
                 evicted=evict,
-                reason=f"max {_MAX_L2_SUBSCRIPTIONS} reached, making room for {symbol}",
+                reason=f"max {self._max_l2} reached, making room for {symbol}",
             )
 
         contract = await self._create_l2_contract(symbol, exchange)

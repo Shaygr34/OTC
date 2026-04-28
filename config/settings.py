@@ -18,6 +18,7 @@ class IBKRSettings(BaseSettings):
     client_id_scanner: int = 1
     client_id_data: int = 2
     timeout: int = 30
+    max_l2_subscriptions: int = 2
 
 
 class TelegramSettings(BaseSettings):

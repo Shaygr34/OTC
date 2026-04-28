@@ -56,6 +56,7 @@ def adapter(bus):
         mock_settings.return_value.ibkr.port = 7497
         mock_settings.return_value.ibkr.client_id_data = 1
         mock_settings.return_value.ibkr.timeout = 10
+        mock_settings.return_value.ibkr.max_l2_subscriptions = 2
 
         from src.broker.ibkr import IBAdapter
         a = IBAdapter(event_bus=bus)
