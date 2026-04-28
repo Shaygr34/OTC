@@ -1,0 +1,44 @@
+name: atm-engine
+
+services:
+  ib-gateway:
+    image: ghcr.io/gnzsnz/ib-gateway:stable
+    restart: always
+    env_file:
+      - .env.gateway
+    ports:
+      - "127.0.0.1:5900:5900"
+    volumes:
+      - ib-gateway-settings:/home/ibgateway/Jts
+    networks:
+      - atm-net
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c '</dev/tcp/localhost/4004'"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  atm-engine:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: always
+    depends_on:
+      ib-gateway:
+        condition: service_healthy
+    env_file:
+      - .env.production
+    environment:
+      # socat ports: 4003 = live, 4004 = paper (NOT 4001/4002)
+      IBKR_HOST: ib-gateway
+      IBKR_PORT: 4004
+    networks:
+      - atm-net
+
+volumes:
+  ib-gateway-settings:
+
+networks:
+  atm-net:
+    driver: bridge
