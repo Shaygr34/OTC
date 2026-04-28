@@ -18,6 +18,7 @@ from src.core.events import L2UpdateEvent, MarketDataEvent, TradeEvent
 logger = structlog.get_logger(__name__)
 
 _MAX_BACKOFF = 60
+_MAX_RECONNECT_ATTEMPTS = 50
 
 # Exchanges to try during contract qualification, in priority order.
 # SMART lets IBKR resolve the best routing; the rest are direct OTC exchanges.
@@ -377,8 +378,19 @@ class IBAdapter(BrokerAdapter):
 
     async def _reconnect_loop(self) -> None:
         self._reconnecting = True
+        attempts = 0
         while self._reconnecting and not self._ib.isConnected():
-            logger.info("ibkr_reconnecting", backoff=self._backoff)
+            attempts += 1
+            if attempts > _MAX_RECONNECT_ATTEMPTS:
+                logger.critical(
+                    "ibkr_reconnect_exhausted",
+                    attempts=attempts,
+                    msg="Max reconnect attempts reached. Exiting.",
+                )
+                self._reconnecting = False
+                import sys
+                sys.exit(1)
+            logger.info("ibkr_reconnecting", backoff=self._backoff, attempt=attempts)
             try:
                 await self._ib.connectAsync(
                     host=self._settings.host,
@@ -387,11 +399,13 @@ class IBAdapter(BrokerAdapter):
                     timeout=self._settings.timeout,
                 )
                 self._backoff = 1
-                logger.info("ibkr_reconnected")
+                logger.info("ibkr_reconnected", after_attempts=attempts)
                 await self._resubscribe_all()
                 return
             except Exception:
-                logger.warning("ibkr_reconnect_failed", backoff=self._backoff)
+                logger.warning(
+                    "ibkr_reconnect_failed", backoff=self._backoff, attempt=attempts,
+                )
                 await asyncio.sleep(self._backoff)
                 self._backoff = min(self._backoff * 2, _MAX_BACKOFF)
         self._reconnecting = False
