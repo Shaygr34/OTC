@@ -20,4 +20,6 @@ COPY shared/ shared/
 # Runtime dirs (ephemeral — not mounted as volumes)
 RUN mkdir -p data logs
 
+ENV PYTHONPATH=/app
+
 CMD ["python", "scripts/run_system.py"]
