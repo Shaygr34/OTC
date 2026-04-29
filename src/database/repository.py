@@ -100,6 +100,14 @@ class Repository:
                 candidate.last_scored = datetime.now(UTC)
                 await session.commit()
 
+    async def get_candidate_by_ticker(self, ticker: str) -> Candidate | None:
+        """Return a candidate by ticker, or None if not found."""
+        async with self._session_factory() as session:
+            result = await session.execute(
+                select(Candidate).where(Candidate.ticker == ticker)
+            )
+            return result.scalar_one_or_none()
+
     async def reject_candidate(self, ticker: str, reason: str) -> None:
         """Mark a candidate as rejected with a reason."""
         async with self._session_factory() as session:

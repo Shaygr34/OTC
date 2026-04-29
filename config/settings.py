@@ -50,12 +50,21 @@ class LogSettings(BaseSettings):
     format: str = "json"
 
 
+class ScannerSettings(BaseSettings):
+    model_config = {"env_prefix": "SCANNER_", "env_file": _ENV_FILE, "extra": "ignore"}
+
+    enabled: bool = True
+    interval_minutes: int = 15
+    max_results_per_scan: int = 50
+
+
 class Settings(BaseSettings):
     ibkr: IBKRSettings = Field(default_factory=IBKRSettings)
     telegram: TelegramSettings = Field(default_factory=TelegramSettings)
     database: DatabaseSettings = Field(default_factory=DatabaseSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     log: LogSettings = Field(default_factory=LogSettings)
+    scanner: ScannerSettings = Field(default_factory=ScannerSettings)
 
 
 @lru_cache(maxsize=1)
