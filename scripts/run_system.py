@@ -30,6 +30,7 @@ from src.database.repository import Repository, get_engine, get_session_factory
 from src.database.schema import create_all_tables
 from src.rules.engine import RuleEngine, load_rules
 from src.scanner.screener import Screener
+from src.scanner.universe import UniverseScanner
 from src.scanner.watchlist import WatchlistEntry, load_watchlist
 
 logger = structlog.get_logger(__name__)
@@ -97,6 +98,15 @@ class SystemRunner:
             adapter=self.adapter,
             screener=self.screener,
         )
+
+        # ── Universe Scanner ──
+        self.universe_scanner: UniverseScanner | None = None
+        if self._settings.scanner.enabled:
+            self.universe_scanner = UniverseScanner(
+                adapter=self.adapter,
+                repo=self._repo,
+                settings=self._settings.scanner,
+            )
 
         # ── Alerts ──
         telegram_settings = self._settings.telegram
@@ -167,6 +177,10 @@ class SystemRunner:
         self.ticker_watcher.start()
         logger.info("ticker_watcher_started")
 
+        # Start universe scanner if enabled
+        if self.universe_scanner is not None:
+            await self.universe_scanner.start()
+
         self._running = True
         self._heartbeat_task = asyncio.create_task(self._heartbeat_loop())
         logger.info("system_started", modules=7, adapter=self._adapter_name)
@@ -222,6 +236,8 @@ class SystemRunner:
         with contextlib.suppress(OSError):
             status_path.unlink()
 
+        if self.universe_scanner is not None:
+            await self.universe_scanner.stop()
         await self.ticker_watcher.stop()
         await self.adapter.disconnect()
         await self._engine.dispose()
