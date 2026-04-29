@@ -587,7 +587,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**362 tests passing across 22 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard deployed. Live IBKR data flow validated (Phase 12) — real L2 with MPIDs, real scores, real persistence confirmed against TWS. Phase 14: containerized for always-on VPS deployment.**
+**370 tests passing across 24 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard deployed. Live IBKR data flow validated (Phase 12). Phase 14: containerized for always-on Railway deployment. Phase 15: automated OTC universe scanner.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -801,6 +801,20 @@ Always-on deployment: engine containerized with Docker, runs alongside IB Gatewa
 - Database: Railway PostgreSQL (unchanged)
 - Dashboard: Vercel (unchanged)
 - Eldar's laptop: optional — uses dashboard + TWS for manual trading
+
+### Phase 15 — Universe Scanner (2026-04-29)
+
+Automated OTC ticker discovery via IBKR `reqScannerDataAsync`.
+
+**Code changes:**
+- `src/scanner/universe.py` — UniverseScanner: periodic 15-min sweep, TRIPS + DUBS tier configs, exchange post-filter, dedup, auto-insert to candidates
+- `src/broker/adapter.py` — added `request_scanner()` and `get_scanner_parameters()` abstract methods
+- `src/broker/ibkr.py` — implemented via `reqScannerDataAsync` with 10s timeout
+- `src/broker/mock.py` — injectable scanner results for testing
+- `src/database/repository.py` — added `get_candidate_by_ticker()`
+- `config/settings.py` — `ScannerSettings` (SCANNER_ENABLED, SCANNER_INTERVAL_MINUTES, SCANNER_MAX_RESULTS_PER_SCAN)
+
+**Flow:** Scanner discovers → pre-filter (OTC exchange + dedup) → insert as active candidate → TickerWatcher subscribes → Screener evaluates → RuleEngine scores
 
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
