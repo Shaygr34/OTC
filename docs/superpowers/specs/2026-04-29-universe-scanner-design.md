@@ -80,7 +80,7 @@ class UniverseScanner:
 ```python
 ScannerSubscription(
     instrument="STK",
-    locationCode="STK.US.MINOR",  # OTC/Pink stocks
+    locationCode="STK.US",         # Broad US; post-filter for OTC exchanges
     scanCode="TOP_PERC_GAIN",     # Active stocks — will test alternatives
     abovePrice=0.0001,
     belowPrice=0.001,
@@ -103,9 +103,9 @@ ScannerSubscription(
 )
 ```
 
-**Note on `locationCode`:** IBKR uses `STK.US.MINOR` for OTC/Pink Sheet stocks. If this doesn't return results, fallback to `STK.US` with post-filter by exchange. The exact location code will be validated during implementation by calling `reqScannerParameters()` which returns the full XML of available codes.
+**Note on `locationCode`:** Using `STK.US` (broad) with exchange post-filter for OTC (PINK/GREY). `STK.US.MINOR` may also work but is unverified. Implementation task #1 calls `reqScannerParametersAsync()` to discover exact available codes and will upgrade to a more specific code if one exists.
 
-**Note on `scanCode`:** `TOP_PERC_GAIN` is a starting point. Other candidates: `MOST_ACTIVE`, `TOP_TRADE_COUNT`, `HOT_BY_VOLUME`. We'll test which returns the best OTC candidates. Multiple scan codes can be run per tier if needed.
+**Note on `scanCode`:** `MOST_ACTIVE` is the primary choice — we want liquid OTC stocks. Fallbacks: `TOP_TRADE_COUNT`, `HOT_BY_VOLUME`. Multiple scan codes can be run per tier if one code doesn't surface enough OTC results.
 
 ---
 
@@ -115,9 +115,9 @@ Before inserting a discovered ticker into the candidates table:
 
 1. **Dedup check** — Skip if ticker already exists in candidates table (any status). Uses `repo.get_candidate_by_ticker()`.
 
-2. **Spread check** — For DUBS tier, compute spread from the scanner result's contract details. If bid/ask spread > 50%, skip. TRIPS tier skips this check (spreads are always wide at sub-penny levels).
+2. **Spread check** — Deferred. `ScanData` does not contain bid/ask prices. Spread filtering happens downstream after TickerWatcher subscribes market data and the Screener evaluates. Future enhancement: add spread-based rejection to Screener.
 
-3. **Exchange validation** — Only accept tickers on PINK or GREY exchanges. Filter by `contractDetails.contract.primaryExchange`.
+3. **Exchange validation** — Only accept tickers on PINK or GREY exchanges. Check `contractDetails.contract.primaryExchange` first, fall back to `contractDetails.validExchanges` (comma-separated string like `"SMART,PINK"`).
 
 ---
 
@@ -165,18 +165,19 @@ if hasattr(self, 'universe_scanner'):
 
 ---
 
-## IBAdapter Changes
+## Broker Adapter Changes
 
-Add one new method to `src/broker/ibkr.py`:
+Add abstract method to `src/broker/adapter.py`, implement in `src/broker/ibkr.py` and `src/broker/mock.py`:
 
 ```python
 async def request_scanner(self, subscription: ScannerSubscription) -> list:
-    """Run a scanner subscription and return results."""
+    """Run a one-shot scanner request. Uses reqScannerDataAsync which
+    subscribes, awaits the initial data dump, cancels, and returns."""
     self._ensure_connected()
-    results = self._ib.reqScannerSubscription(subscription)
-    # Wait for results (ib_async returns ScanDataList)
-    await asyncio.sleep(2)  # Scanner needs time to return
-    self._ib.cancelScannerSubscription(results)
+    results = await asyncio.wait_for(
+        self._ib.reqScannerDataAsync(subscription),
+        timeout=10.0,
+    )
     return list(results)
 ```
 
@@ -196,10 +197,10 @@ Add to `src/database/repository.py`:
 
 ```python
 async def get_candidate_by_ticker(self, ticker: str) -> Candidate | None:
-    """Check if a ticker already exists in candidates table."""
+    """Check if a ticker already exists in candidates table (any status)."""
 ```
 
-This likely already exists or is trivially added.
+This does NOT exist currently — must be implemented. Trivial SELECT query.
 
 ---
 
@@ -249,6 +250,8 @@ universe_scan_error      — any IBKR errors during scan
 
 ## Open Questions (Resolve During Implementation)
 
-1. **Exact `locationCode` for OTC stocks** — Need to call `reqScannerParameters()` to discover available codes. `STK.US.MINOR` is the likely candidate but needs verification.
-2. **Best `scanCode`** — Start with `TOP_PERC_GAIN`, test `MOST_ACTIVE` and `HOT_BY_VOLUME`. May need multiple codes per tier.
-3. **Spread calculation from scanner results** — `ScanData.contractDetails` may or may not include bid/ask. If not, spread check happens after TickerWatcher subscribes market data.
+1. **Exact `locationCode` for OTC stocks** — First implementation task calls `reqScannerParametersAsync()` to discover available codes. Using `STK.US` with post-filter as safe default.
+2. **Best `scanCode`** — Start with `MOST_ACTIVE`, test alternatives. May need multiple codes per tier.
+3. **Spread check** — RESOLVED: Deferred to downstream. `ScanData` has no bid/ask. Spread filtering will happen after market data subscription.
+4. **IBKR scanner access on this account type** — Must verify scanner API works on Eldar's account. Test during implementation task #1.
+5. **Volume filter threshold** — `aboveVolume=10000` may be too aggressive for TRIPS. Consider tier-dependent: TRIPS=1000, DUBS=10000.
