@@ -8,7 +8,7 @@ import asyncio
 from decimal import Decimal
 
 import structlog
-from ib_async import IB, Stock
+from ib_async import IB, ScannerSubscription, Stock
 
 from config.settings import IBKRSettings, get_settings
 from src.broker.adapter import BrokerAdapter
@@ -301,6 +301,23 @@ class IBAdapter(BrokerAdapter):
             })
         logger.info("historical_bars_loaded", symbol=symbol, count=len(result))
         return result
+
+    # ── Scanner ──────────────────────────────────────────────
+
+    async def request_scanner(self, subscription: object) -> list:
+        """Run a one-shot scanner request via reqScannerDataAsync."""
+        self._ensure_connected()
+        results = await asyncio.wait_for(
+            self._ib.reqScannerDataAsync(subscription),
+            timeout=10.0,
+        )
+        logger.info("scanner_results", count=len(results) if results else 0)
+        return list(results) if results else []
+
+    async def get_scanner_parameters(self) -> str:
+        """Return XML string of all available scanner parameters."""
+        self._ensure_connected()
+        return await self._ib.reqScannerParametersAsync()
 
     # ── ib_async callback (sync → async bridge) ─────────────────
 

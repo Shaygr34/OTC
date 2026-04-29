@@ -37,6 +37,7 @@ class MockAdapter(BrokerAdapter):
         self._contracts: dict[str, MockContract] = {}
         self._subscriptions: dict[str, set[str]] = {}
         self._historical_data: dict[str, list[dict]] = {}
+        self._scanner_results: list = []
         self._next_con_id = 1
 
     # ── Lifecycle ────────────────────────────────────────────────
@@ -184,6 +185,20 @@ class MockAdapter(BrokerAdapter):
     def set_historical_data(self, symbol: str, bars: list[dict]) -> None:
         """Inject historical bar data for testing."""
         self._historical_data[symbol] = bars
+
+    # ── Scanner ──────────────────────────────────────────────
+
+    async def request_scanner(self, subscription: object) -> list:
+        self._ensure_connected()
+        return list(self._scanner_results)
+
+    async def get_scanner_parameters(self) -> str:
+        self._ensure_connected()
+        return "<xml>mock scanner parameters</xml>"
+
+    def set_scanner_results(self, results: list) -> None:
+        """Inject scanner results for testing."""
+        self._scanner_results = results
 
     # ── Introspection (for test assertions) ──────────────────────
 

@@ -94,3 +94,17 @@ class BrokerAdapter(ABC):
         Returns list of dicts with keys: open, high, low, close, volume.
         All price values are Decimal.
         """
+
+    # ── Scanner ──────────────────────────────────────────────
+
+    @abstractmethod
+    async def request_scanner(self, subscription: object) -> list:
+        """Run a scanner request and return results.
+
+        ``subscription`` is a broker-specific scanner config object.
+        Returns a list of results (broker-specific format).
+        """
+
+    @abstractmethod
+    async def get_scanner_parameters(self) -> str:
+        """Return available scanner parameters as a string (XML for IBKR)."""
