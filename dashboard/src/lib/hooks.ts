@@ -21,3 +21,7 @@ export function useAlerts(severity?: string, ticker?: string) {
 export function useHealth() {
   return useSWR("/api/health", fetcher, { refreshInterval: 5000 });
 }
+
+export function useScannerStatus() {
+  return useSWR("/api/scanner-status", fetcher, { refreshInterval: 15000 });
+}

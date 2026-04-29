@@ -1,4 +1,6 @@
 import type { L2Snapshot } from "@/lib/types";
+import Tip from "./Tip";
+import { tips } from "@/lib/i18n";
 
 const BAD_MMS = new Set([
   "MAXM", "GLED", "CFGN", "PAUL", "JANE", "BBAR", "BLAS",
@@ -12,44 +14,63 @@ function formatSize(n: number): string {
 }
 
 export default function L2DepthPanel({ snapshot }: { snapshot: L2Snapshot | null }) {
-  if (!snapshot) return <div className="text-zinc-500">No L2 data</div>;
+  if (!snapshot) return <div className="text-zinc-600 text-xs">No L2 data yet</div>;
 
   const ratio = snapshot.total_bid_shares && snapshot.total_ask_shares
     ? (snapshot.total_bid_shares / snapshot.total_ask_shares).toFixed(1)
     : "--";
 
+  const ratioNum = parseFloat(ratio) || 0;
+  const ratioColor = ratioNum >= 5 ? "text-emerald-400" : ratioNum >= 3 ? "text-amber-400" : "text-red-400";
+
   return (
-    <div className="bg-[#1a1a2e] border border-[#2a2a3e] rounded-lg p-4">
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-bold text-zinc-300">L2 Depth</h3>
-        <span className="text-xs text-zinc-400">
-          Ratio: <span className="font-mono font-bold text-white">{ratio}:1</span>
-          {" "}({formatSize(snapshot.total_bid_shares || 0)} bid / {formatSize(snapshot.total_ask_shares || 0)} ask)
+    <div>
+      <div className="flex items-center gap-3 mb-3 text-xs">
+        <Tip en={tips.imbalance.en} he={tips.imbalance.he}>
+          <span className="text-zinc-500">Ratio:</span>
+        </Tip>
+        <span className={`font-mono font-bold text-sm ${ratioColor}`}>{ratio}:1</span>
+        <span className="text-zinc-600">
+          {formatSize(snapshot.total_bid_shares || 0)} bid / {formatSize(snapshot.total_ask_shares || 0)} ask
         </span>
       </div>
-      <div className="grid grid-cols-2 gap-4">
+
+      <div className="grid grid-cols-2 gap-3">
         <div>
-          <div className="text-xs text-green-400 font-bold mb-2">BIDS</div>
+          <div className="text-[10px] text-emerald-500 font-bold mb-1.5 uppercase tracking-wider">Bids</div>
           {(snapshot.bid_levels || []).map((level, i) => (
-            <div key={i} className="flex justify-between text-xs py-0.5 font-mono">
-              <span className="text-zinc-400">{level.mm_id || "?"}</span>
-              <span className="text-green-400">{formatSize(level.size)}</span>
-              <span className="text-zinc-500">{level.price}</span>
+            <div key={i} className="flex justify-between text-[11px] py-0.5 font-mono">
+              <span className="text-zinc-500 w-10">{level.mm_id || "?"}</span>
+              <span className="text-emerald-400">{formatSize(level.size)}</span>
+              <span className="text-zinc-600">{level.price}</span>
             </div>
           ))}
+          {(!snapshot.bid_levels || snapshot.bid_levels.length === 0) && (
+            <div className="text-zinc-700 text-[10px]">No bids</div>
+          )}
         </div>
         <div>
-          <div className="text-xs text-red-400 font-bold mb-2">ASKS</div>
+          <div className="text-[10px] text-red-500 font-bold mb-1.5 uppercase tracking-wider">Asks</div>
           {(snapshot.ask_levels || []).map((level, i) => (
-            <div key={i} className="flex justify-between text-xs py-0.5 font-mono">
-              <span className="text-zinc-500">{level.price}</span>
+            <div key={i} className="flex justify-between text-[11px] py-0.5 font-mono">
+              <span className="text-zinc-600">{level.price}</span>
               <span className="text-red-400">{formatSize(level.size)}</span>
-              <span className={BAD_MMS.has(level.mm_id) ? "text-red-500 font-bold" : "text-zinc-400"}>
+              <span className={BAD_MMS.has(level.mm_id)
+                ? "text-red-500 font-bold w-10 text-right"
+                : "text-zinc-500 w-10 text-right"
+              }>
                 {level.mm_id || "?"}
-                {BAD_MMS.has(level.mm_id) && " !!"}
+                {BAD_MMS.has(level.mm_id) && (
+                  <Tip en={tips.bad_mm.en} he={tips.bad_mm.he}>
+                    <span className="text-red-500"> !!</span>
+                  </Tip>
+                )}
               </span>
             </div>
           ))}
+          {(!snapshot.ask_levels || snapshot.ask_levels.length === 0) && (
+            <div className="text-zinc-700 text-[10px]">No asks</div>
+          )}
         </div>
       </div>
     </div>

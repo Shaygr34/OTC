@@ -3,8 +3,8 @@ import "./globals.css";
 import Sidebar from "@/components/Sidebar";
 
 export const metadata: Metadata = {
-  title: "ATM Engine",
-  description: "OTC penny stock decision support",
+  title: "ATM Engine — OTC Decision Support",
+  description: "OTC penny stock ATM pattern scanner and scoring engine",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -13,7 +13,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body>
         <div className="flex">
           <Sidebar />
-          <main className="ml-56 flex-1 min-h-screen p-6">
+          <main className="ml-60 flex-1 min-h-screen p-5 bg-[#08080d]">
             {children}
           </main>
         </div>
