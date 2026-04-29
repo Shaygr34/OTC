@@ -587,7 +587,7 @@ Each module should be independently testable before integration.
 
 ## Build Progress
 
-**370 tests passing across 24 test files. Zero regressions at each phase. v0 pipeline complete + V1 dashboard deployed. Live IBKR data flow validated (Phase 12). Phase 14: containerized for always-on Railway deployment. Phase 15: automated OTC universe scanner.**
+**370 tests passing across 24 test files. Zero regressions at each phase. v0 pipeline complete. Phase 14: containerized on Railway (always-on). Phase 15: automated universe scanner. Phase 16: dashboard overhaul with Hebrew tooltips + scanner visibility.**
 
 ### Phase 1 — Config, Core, Database (48 tests)
 - `config/constants.py` — all price tiers, stability thresholds, MM lists, volume/dilution/risk constants
@@ -774,12 +774,15 @@ Eldar's machine (TWS + Engine) → Railway PostgreSQL ← Vercel Dashboard (Next
 - `score_detail` tracks per-component `{score, max, has_data}` for all 8 scoring components
 - Dashboard shows data completeness: "7/8 components scored"
 
-**Next.js dashboard (`dashboard/`):**
+**Next.js dashboard (`dashboard/`) — overhauled Phase 16 (2026-04-29):**
 - 3 pages: Watchlist (home), Ticker Detail (`/ticker/[symbol]`), Alerts
-- Components: ScoreBar, ScoreBreakdown, L2DepthPanel (bad MMs red-highlighted), TSFeed, ATMPlan, ConnectionStatus
-- API routes: `GET/POST /api/candidates`, `GET /api/ticker/[symbol]`, `GET /api/alerts`, `GET /api/health`
-- SWR polling every 5 seconds, dark trading terminal theme
-- PG connection pool (`pg.Pool`, max 5, idle timeout 10s)
+- Components: ScoreBar, ScoreBreakdown, L2DepthPanel, TSFeed, ATMPlan, Tip (Hebrew tooltips), Sidebar (engine + scanner status)
+- API routes: `GET/POST /api/candidates`, `GET /api/ticker/[symbol]`, `GET /api/alerts`, `GET /api/health`, `GET /api/scanner-status`
+- Hebrew tooltip system: `Tip` component + `i18n.ts` with 25+ translations. Hover (ⓘ) shows Hebrew explanation.
+- Scanner visibility: sidebar shows discoveries count (last hour/24h/total), watchlist shows Scanner Discoveries section + SCANNER/MANUAL source badges
+- Signal badges: TRADE (green), WATCH (amber), PASS (gray) with Hebrew tooltips
+- SWR polling every 5 seconds, dark terminal theme (#08080d base)
+- Deploy: `cd dashboard && npx vercel --prod` (auto-deploy from git may need root dir config)
 - Deployed: https://dashboard-bay-delta-68.vercel.app
 
 **Streamlit dashboard** (`src/dashboard/app.py`) is now **legacy** — kept in repo but not the primary interface.
@@ -934,4 +937,4 @@ Dashboard (Next.js/pg): `postgresql://user:pass@host:port/db` (no driver prefix)
 - Vercel auto-deploys dashboard on every push to main
 - No branch/PR ceremony — direct main collaboration
 
-**Current status (2026-04-28):** Engine containerized for VPS deployment (Phase 14). Docker Compose stack: IB Gateway + engine on Hetzner VPS. Reconnect bug fixed (max 50 attempts). L2 slots configurable. First trading session ran March 25 (7h, 7 tickers). Next: provision VPS, deploy, then build automated scanner.
+**Current status (2026-04-29):** Engine live on Railway (IB Gateway + engine containers). Universe scanner runs every 15 min. Dashboard overhauled with Hebrew tooltips and scanner pipeline visibility. Reconnect bug fixed. L2 slots configurable. Next: validate scanner results during market hours, port Ziva TA modules, Eldar's TA spec for DUBS vision analysis.
