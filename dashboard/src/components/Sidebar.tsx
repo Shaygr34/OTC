@@ -12,23 +12,30 @@ function EngineIndicator() {
   const { data } = useHealth();
   const status = data?.engine_status || "disconnected";
 
+  const marketOpen = data?.market_open ?? false;
+
   const configs = {
-    connected: { color: "bg-emerald-500", ring: "ring-emerald-500/30", label: "Engine Live", he: "מנוע פעיל" },
-    stale: { color: "bg-amber-500", ring: "ring-amber-500/30", label: "Engine Stale", he: "מנוע — נתונים ישנים" },
-    disconnected: { color: "bg-red-500", ring: "ring-red-500/30", label: "Engine Offline", he: "מנוע מנותק" },
+    connected: { color: "bg-emerald-500", ring: "ring-emerald-500/30", label: "Engine Live" },
+    stale: { color: "bg-amber-500", ring: "ring-amber-500/30", label: marketOpen ? "Engine Stale" : "Engine Idle" },
+    disconnected: { color: "bg-red-500", ring: "ring-red-500/30", label: "Engine Offline" },
   };
   const c = configs[status as keyof typeof configs] || configs.disconnected;
 
   return (
     <div className="px-3 py-2.5 bg-[#0d0d14] rounded-lg border border-[#1e1e30]">
       <div className="flex items-center gap-2">
-        <div className={`w-2 h-2 rounded-full ${c.color} ring-4 ${c.ring} animate-pulse`} />
+        <div className={`w-2 h-2 rounded-full ${c.color} ring-4 ${c.ring} ${status === "connected" ? "animate-pulse" : ""}`} />
         <span className="text-xs text-zinc-300">{c.label}</span>
       </div>
       {data && (
-        <div className="mt-1.5 flex gap-3 text-[10px] text-zinc-500">
-          <span>{data.active_tickers} active</span>
-          <span>{data.pending_tickers} pending</span>
+        <div className="mt-1.5 space-y-0.5">
+          <div className="flex gap-3 text-[10px] text-zinc-500">
+            <span>{data.active_tickers} active</span>
+            <span>{data.pending_tickers} pending</span>
+          </div>
+          <div className="text-[9px] text-zinc-600">
+            {marketOpen ? "US Market Open" : "US Market Closed"}
+          </div>
         </div>
       )}
     </div>

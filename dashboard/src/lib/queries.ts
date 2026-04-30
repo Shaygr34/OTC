@@ -95,18 +95,34 @@ export async function getHealth(): Promise<HealthStatus> {
     SELECT
       (SELECT MAX(timestamp) FROM trades) as last_trade,
       (SELECT MAX(timestamp) FROM l2_snapshots) as last_l2,
+      (SELECT MAX(last_scored) FROM candidates) as last_engine_activity,
       (SELECT COUNT(*) FROM candidates WHERE status = 'active') as active_tickers,
       (SELECT COUNT(*) FROM candidates WHERE status = 'manual') as pending_tickers
   `);
 
   const row = rows[0];
-  const lastActivity = row.last_trade > row.last_l2 ? row.last_trade : row.last_l2;
-  const ageMs = lastActivity ? Date.now() - new Date(lastActivity).getTime() : Infinity;
+  const lastMarketData = row.last_trade > row.last_l2 ? row.last_trade : row.last_l2;
+  const lastActivity = row.last_engine_activity;
+  const marketAgeMs = lastMarketData ? Date.now() - new Date(lastMarketData).getTime() : Infinity;
+  const engineAgeMs = lastActivity ? Date.now() - new Date(lastActivity).getTime() : Infinity;
+
+  // Check if US market is likely open (rough: Mon-Fri 13:30-20:00 UTC)
+  const now = new Date();
+  const utcHour = now.getUTCHours();
+  const utcDay = now.getUTCDay();
+  const marketLikelyOpen = utcDay >= 1 && utcDay <= 5 && utcHour >= 13 && utcHour < 20;
 
   let engine_status: "connected" | "stale" | "disconnected";
-  if (ageMs < 30_000) engine_status = "connected";
-  else if (ageMs < 300_000) engine_status = "stale";
-  else engine_status = "disconnected";
+  if (marketAgeMs < 30_000) {
+    engine_status = "connected";
+  } else if (marketAgeMs < 300_000) {
+    engine_status = "stale";
+  } else if (!marketLikelyOpen && engineAgeMs < 86_400_000) {
+    // Market closed but engine was active in last 24h — it's idle, not dead
+    engine_status = "stale";
+  } else {
+    engine_status = "disconnected";
+  }
 
-  return { ...row, engine_status };
+  return { ...row, engine_status, market_open: marketLikelyOpen };
 }
