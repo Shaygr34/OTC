@@ -789,21 +789,32 @@ Eldar's machine (TWS + Engine) → Railway PostgreSQL ← Vercel Dashboard (Next
 
 ### Phase 14 — VPS + IB Gateway Containerization (2026-04-28)
 
-Always-on deployment: engine containerized with Docker, runs alongside IB Gateway on Hetzner VPS.
+Always-on deployment on Railway (NOT Hetzner — verification failed, switched to Railway for ecosystem simplicity).
 
 **Code changes:**
-- `Dockerfile` — Python 3.12-slim engine image
+- `Dockerfile` — Python 3.12-slim engine image. MUST set `ENV PYTHONPATH=/app` or imports fail.
 - `docker-compose.yml` — IB Gateway (gnzsnz/ib-gateway:stable) + engine, bridge network, healthcheck
 - `.dockerignore` — excludes tests, docs, dashboard, data
-- `.env.production.example` + `.env.gateway.example` — VPS env templates
+- `.env.production.example` + `.env.gateway.example` — VPS env templates (Railway uses env vars in dashboard instead)
 - `src/broker/ibkr.py` — max reconnect attempts (50), sys.exit(1) for Docker restart
 - Merged `fix/l2-reserve-slot-for-tws` — L2 slots configurable via `IBKR_MAX_L2_SUBSCRIPTIONS` (default 2)
 
-**Topology:**
-- Engine: Hetzner VPS Docker container → connects to IB Gateway container on socat port 4004 (paper)
-- Database: Railway PostgreSQL (unchanged)
+**Railway topology (LIVE as of 2026-04-29):**
+- `ib-gateway` service — Docker image `ghcr.io/gnzsnz/ib-gateway:stable`, Eldar's live account, `READ_ONLY_API=yes`
+- `atm-engine` service — built from repo Dockerfile, connects to `ib-gateway.railway.internal:4003` (socat live port)
+- `Postgres` — Railway PG (`centerbeam.proxy.rlwy.net:35200`), internal: `postgres.railway.internal:5432`
 - Dashboard: Vercel (unchanged)
 - Eldar's laptop: optional — uses dashboard + TWS for manual trading
+
+**Critical Railway/IB Gateway gotchas:**
+- `TRADING_MODE=paper` causes "Paper Account Notice" dialog that blocks IB Gateway API. Use `TRADING_MODE=live` with `READ_ONLY_API=yes` instead.
+- IB Gateway socat remaps ports: internal 4001/4002 → external 4003 (live) / 4004 (paper). Container-to-container uses socat ports.
+- Railway volume at `/home/ibgateway/Jts` breaks the image (overwrites templates). Mount at `/home/ibgateway/settings` with `TWS_SETTINGS_PATH=/home/ibgateway/settings`.
+- Engine `IBKR_PORT=4003` (live socat) — NOT 4001 or 4002.
+- Railway CLI: `railway service <name>` to switch context, `railway variables --set "KEY=VAL"`, `railway deployment redeploy --service <name> --yes`
+- Vercel dashboard: auto-deploy from git doesn't trigger for subdirectory. Manual deploy: `cd dashboard && npx vercel --prod`
+- 2FA: Eldar must approve on IBKR Mobile app when Gateway starts. No paper 2FA bypass available.
+- IBKR scanner returns 0 results outside market hours (Mon-Fri 9:30-16:00 ET). This is normal.
 
 ### Phase 15 — Universe Scanner (2026-04-29)
 
@@ -818,6 +829,21 @@ Automated OTC ticker discovery via IBKR `reqScannerDataAsync`.
 - `config/settings.py` — `ScannerSettings` (SCANNER_ENABLED, SCANNER_INTERVAL_MINUTES, SCANNER_MAX_RESULTS_PER_SCAN)
 
 **Flow:** Scanner discovers → pre-filter (OTC exchange + dedup) → insert as active candidate → TickerWatcher subscribes → Screener evaluates → RuleEngine scores
+
+### Phase 16 — Dashboard Overhaul (2026-04-29)
+
+Rebuilt dashboard with scanner pipeline visibility and Hebrew tooltip system.
+
+**Code changes:**
+- `src/components/Tip.tsx` — Reusable Hebrew tooltip (hover ⓘ icon)
+- `src/lib/i18n.ts` — 25+ Hebrew translations for all metrics and signals
+- `src/app/api/scanner-status/route.ts` — Scanner discovery stats API
+- Redesigned Sidebar — engine status (Live/Idle/Offline) + scanner panel (discoveries count) + market hours indicator
+- Redesigned Watchlist — signal badges (TRADE/WATCH/PASS), source badges (SCANNER/MANUAL), scanner discoveries section
+- Redesigned Ticker Detail — card grid with Hebrew-tipped section headers
+- Smart health check — shows "Idle" not "Offline" when market is closed
+
+**Dashboard deploy:** `cd dashboard && npx vercel --prod` (git push does NOT auto-deploy — needs root dir config on Vercel)
 
 ### What's NOT built yet (v0 deferred items)
 - L2 refresh detection FSM (constants exist, implementation deferred)
@@ -891,8 +917,11 @@ Do not build ahead. Stay in current phase until explicitly told to advance.
 ## Running the System
 
 ```bash
-# Engine (Eldar's machine — TWS must be running on port 7497)
+# Engine — local dev (TWS must be running on port 7497)
 .venv/bin/python scripts/run_system.py
+
+# Engine — production (Railway, always-on, no laptop needed)
+# Managed via Railway CLI, auto-restarts on crash
 
 # Dashboard (Vercel — auto-deployed on push to main)
 # https://dashboard-bay-delta-68.vercel.app
@@ -908,7 +937,13 @@ docker compose up -d              # start both containers
 docker compose logs -f atm-engine # follow engine logs
 docker compose down               # stop everything
 
-# Tests (362 passing, uses SQLite in-memory)
+# Railway management
+railway service atm-engine && railway logs          # engine logs
+railway service ib-gateway && railway logs          # gateway logs
+railway service atm-engine && railway variables     # check env vars
+railway deployment redeploy --service ib-gateway --yes  # restart gateway
+
+# Tests (370 passing, uses SQLite in-memory)
 .venv/bin/pytest tests/ -x -q
 
 # Lint
